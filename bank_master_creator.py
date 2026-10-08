@@ -53,33 +53,45 @@ def quote(value: str) -> str:
     return f"'{escape(value)}'"
 
 
-def _insert_sql(table: str, columns: str, *values: str) -> str:
+BANK_TABLE = ("m_banks", "bank_code, bank_name, bank_name_kana")
+BRANCH_TABLE = ("m_bank_branches", "bank_code, branch_code, branch_name, branch_name_kana")
+
+
+def _bank_values(row: list[str]) -> str:
+    return ", ".join(quote(v) for v in (row[BANK_CODE], row[NAME], row[NAME_KANA].rstrip(" ")))
+
+
+def _branch_values(row: list[str]) -> str:
+    values = (row[BANK_CODE], row[BRANCH_CODE], row[NAME], row[NAME_KANA].rstrip(" "))
+    return ", ".join(quote(v) for v in values)
+
+
+def _insert_sql(table: str, columns: str, values_list: list[str]) -> str:
     # 値はすべて quote() でエスケープ済みです。
-    quoted = ", ".join(quote(v) for v in values)
-    return f"INSERT INTO {table} ({columns}) VALUES ({quoted});"  # noqa: S608
+    if len(values_list) == 1:
+        return f"INSERT INTO {table} ({columns}) VALUES ({values_list[0]});"  # noqa: S608
+    body = ",\n".join(f"({values})" for values in values_list)
+    return f"INSERT INTO {table} ({columns}) VALUES\n{body};"
+
+
+def make_insert_sqls(
+    table: str, columns: str, values_list: list[str], rows_per_insert: int
+) -> list[str]:
+    """rows_per_insert 行ずつまとめた INSERT 文のリストを作ります。"""
+    return [
+        _insert_sql(table, columns, values_list[i : i + rows_per_insert])
+        for i in range(0, len(values_list), rows_per_insert)
+    ]
 
 
 def make_bank_insert_sql(row: list[str]) -> str:
     """銀行マスタ用 INSERT SQL を作成します。"""
-    return _insert_sql(
-        "m_banks",
-        "bank_code, bank_name, bank_name_kana",
-        row[BANK_CODE],
-        row[NAME],
-        row[NAME_KANA].rstrip(" "),
-    )
+    return _insert_sql(*BANK_TABLE, [_bank_values(row)])
 
 
 def make_branch_insert_sql(row: list[str]) -> str:
     """支店マスタ用 INSERT SQL を作成します。"""
-    return _insert_sql(
-        "m_bank_branches",
-        "bank_code, branch_code, branch_name, branch_name_kana",
-        row[BANK_CODE],
-        row[BRANCH_CODE],
-        row[NAME],
-        row[NAME_KANA].rstrip(" "),
-    )
+    return _insert_sql(*BRANCH_TABLE, [_branch_values(row)])
 
 
 def _decoded_lines(input_path: Path) -> Iterator[str]:
@@ -127,25 +139,29 @@ def write_sql(
     *,
     delete_before_insert: bool = False,
     timestamp: bool = True,
+    rows_per_insert: int = 1,
 ) -> tuple[Path, Path]:
     """output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出し、2 つのパスを返します。
 
     delete_before_insert が真なら、トランザクション内でテーブルを空にしてから INSERT します。
     timestamp が偽なら、ファイル名の先頭に日時を付けません。
+    rows_per_insert は 1 つの INSERT 文にまとめる行数です。
     """
     prefix = (now or datetime.now().astimezone()).strftime("(%Y%m%d_%H%M%S)") if timestamp else ""
     output_dir.mkdir(parents=True, exist_ok=True)
     bank_path = output_dir / f"{prefix}銀行マスタINSERT.sql"
     branch_path = output_dir / f"{prefix}支店マスタINSERT.sql"
-    bank_lines = [make_bank_insert_sql(row) + "\n" for row in banks]
-    branch_lines = [make_branch_insert_sql(row) + "\n" for row in branches]
-    targets = ((bank_path, "m_banks", bank_lines), (branch_path, "m_bank_branches", branch_lines))
-    for path, table, lines in targets:
+    targets = (
+        (bank_path, BANK_TABLE, [_bank_values(row) for row in banks]),
+        (branch_path, BRANCH_TABLE, [_branch_values(row) for row in branches]),
+    )
+    for path, (table, columns), values_list in targets:
         with path.open("w", encoding="utf-8", newline="\n") as f:
             f.write(HEADER)
             if delete_before_insert:
                 f.write(f"START TRANSACTION;\nDELETE FROM {table};\n")
-            f.writelines(lines)
+            for sql in make_insert_sqls(table, columns, values_list, rows_per_insert):
+                f.write(sql + "\n")
             if delete_before_insert:
                 f.write("COMMIT;\n")
     return bank_path, branch_path
@@ -297,6 +313,13 @@ def diff_lines(banks: Diff, branches: Diff) -> list[str]:
     return lines
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("1 以上を指定してください。")
+    return value
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -309,6 +332,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--no-timestamp",
         action="store_true",
         help="ファイル名の先頭に日時を付けない (銀行マスタINSERT.sql, 支店マスタINSERT.sql)",
+    )
+    parser.add_argument(
+        "--rows-per-insert",
+        type=_positive_int,
+        default=1,
+        metavar="N",
+        help="1 つの INSERT 文にまとめる行数 (既定: 1)",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -368,6 +398,7 @@ def main(argv: list[str] | None = None) -> None:
             args.output_dir,
             delete_before_insert=args.delete_before_insert,
             timestamp=not args.no_timestamp,
+            rows_per_insert=args.rows_per_insert,
         )
     except OSError as e:
         _fail(f"{args.output_dir} に書き出せません ({e.strerror})。")

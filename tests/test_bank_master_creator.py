@@ -15,6 +15,7 @@ from bank_master_creator import (
     make_branch_insert_sql,
     quote,
     read_rows,
+    write_sql,
 )
 
 NOW = datetime(2026, 1, 2, 3, 4, 5)
@@ -358,6 +359,52 @@ class TestCheck:
     def test_rejects_delete_before_insert(self, tmp_path, capsys):
         with pytest.raises(SystemExit) as excinfo:
             main(["--check", "--delete-before-insert"])
+
+        assert excinfo.value.code == 2
+
+
+class TestRowsPerInsert:
+    def test_groups_values(self, tmp_path):
+        branches = [branch_row(), branch_row(name="二"), branch_row(name="三")]
+
+        _, branch = write_sql([bank_row()], branches, tmp_path, NOW, rows_per_insert=2)
+
+        assert branch.read_text(encoding="utf-8").splitlines() == [
+            "SET NAMES utf8mb4;",
+            "INSERT INTO m_bank_branches (bank_code, branch_code, branch_name, branch_name_kana)"
+            " VALUES",
+            "('0001', '001', 'テスト支店', 'ﾃｽﾄｼﾃﾝ'),",
+            "('0001', '001', '二', 'ﾃｽﾄｼﾃﾝ');",
+            "INSERT INTO m_bank_branches (bank_code, branch_code, branch_name, branch_name_kana)"
+            " VALUES ('0001', '001', '三', 'ﾃｽﾄｼﾃﾝ');",
+        ]
+
+    def test_one_per_insert_is_default_layout(self, tmp_path):
+        bank, _ = write_sql([bank_row()], [], tmp_path, NOW, rows_per_insert=1)
+
+        assert bank.read_text(encoding="utf-8") == (
+            "SET NAMES utf8mb4;\n" + make_bank_insert_sql(bank_row()) + "\n"
+        )
+
+    def test_main_flag_with_delete_before_insert(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
+        out = tmp_path / "out"
+
+        main([
+            "--input", str(src), "--output-dir", str(out), "--no-timestamp",
+            "--rows-per-insert", "10", "--delete-before-insert",
+        ])  # fmt: skip
+
+        lines = (out / "支店マスタINSERT.sql").read_text(encoding="utf-8").splitlines()
+        assert lines[2] == "DELETE FROM m_bank_branches;"
+        assert lines[3].endswith(" VALUES")
+        assert lines[-1] == "COMMIT;"
+        assert sum(line.startswith("INSERT") for line in lines) == 1
+
+    @pytest.mark.parametrize("value", ["0", "-1", "x"])
+    def test_rejects_non_positive(self, value):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--rows-per-insert", value])
 
         assert excinfo.value.code == 2
 

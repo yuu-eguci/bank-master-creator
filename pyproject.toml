@@ -20,8 +20,8 @@ select = ["E", "F", "W", "I", "UP", "B", "N", "S", "SIM", "PTH", "DTZ", "PT", "P
 ignore = ["PLR2004"]
 
 [tool.ruff.lint.pylint]
-# write_sql はデータ 3 つ + 日時 + キーワード専用のフラグ 2 つです。
-max-args = 6
+# write_sql はデータ 3 つ + 日時 + キーワード専用のオプション 3 つです。
+max-args = 7
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "DTZ001"]
