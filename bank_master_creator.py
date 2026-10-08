@@ -6,7 +6,9 @@
 import argparse
 import csv
 import sys
+from collections import Counter
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
@@ -159,6 +161,70 @@ def create(
     return write_sql(banks, branches, output_dir, now, delete_before_insert=delete_before_insert)
 
 
+# 元データのｶﾅは 15 文字で切られているため、15 文字ちょうどなら切り詰めの可能性があります。
+KANA_WIDTH = 15
+
+
+@dataclass
+class Report:
+    """--check の検査結果です。duplicate_*/orphan_branches があれば問題ありとみなします。"""
+
+    banks: int
+    branches: int
+    duplicate_bank_codes: list[str]
+    duplicate_branch_codes: list[str]
+    orphan_branches: list[str]
+    banks_without_branches: int
+    truncated_kana: int
+
+    @property
+    def problems(self) -> bool:
+        return bool(
+            self.duplicate_bank_codes or self.duplicate_branch_codes or self.orphan_branches
+        )
+
+    def lines(self) -> list[str]:
+        def with_codes(label: str, codes: list[str]) -> str:
+            suffix = f" ({', '.join(codes)})" if codes else ""
+            return f"{label}: {len(codes)}{suffix}"
+
+        return [
+            f"銀行: {self.banks} 件、支店: {self.branches} 件",
+            with_codes("銀行コード重複", self.duplicate_bank_codes),
+            with_codes("銀行+支店コード重複", self.duplicate_branch_codes),
+            with_codes("銀行行のない支店", self.orphan_branches),
+            f"支店のない銀行: {self.banks_without_branches}",
+            f"ｶﾅが {KANA_WIDTH} 文字 (切り詰めの可能性): {self.truncated_kana}",
+        ]
+
+
+def _duplicates(keys: list[str]) -> list[str]:
+    return [key for key, count in Counter(keys).items() if count > 1]
+
+
+def check(banks: list[list[str]], branches: list[list[str]]) -> Report:
+    """銀行行・支店行の整合性を検査します。"""
+    bank_codes = [row[BANK_CODE] for row in banks]
+    branch_keys = [f"{row[BANK_CODE]}-{row[BRANCH_CODE]}" for row in branches]
+    bank_code_set = set(bank_codes)
+    branch_bank_codes = {row[BANK_CODE] for row in branches}
+    return Report(
+        banks=len(banks),
+        branches=len(branches),
+        duplicate_bank_codes=_duplicates(bank_codes),
+        duplicate_branch_codes=_duplicates(branch_keys),
+        orphan_branches=[
+            key
+            for row, key in zip(branches, branch_keys, strict=True)
+            if row[BANK_CODE] not in bank_code_set
+        ],
+        banks_without_branches=sum(code not in branch_bank_codes for code in bank_codes),
+        truncated_kana=sum(
+            len(row[NAME_KANA].rstrip(" ")) >= KANA_WIDTH for row in banks + branches
+        ),
+    )
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -172,7 +238,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="トランザクション内でテーブルを空にしてから INSERT する (入れ直し用)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--check", action="store_true", help="ファイルを作らず、件数と検査結果だけを表示する"
+    )
+    args = parser.parse_args(argv)
+    if args.check and args.delete_before_insert:
+        parser.error("--check と --delete-before-insert は同時に指定できません。")
+    return args
 
 
 def _fail(message: str) -> NoReturn:
@@ -194,6 +266,12 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as e:
         _fail(str(e))
+    if args.check:
+        report = check(banks, branches)
+        print("\n".join(report.lines()))
+        if report.problems:
+            _fail("データに問題があります。")
+        return
     paths = write_sql(
         banks, branches, args.output_dir, delete_before_insert=args.delete_before_insert
     )

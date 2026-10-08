@@ -5,6 +5,7 @@ import pytest
 
 import bank_master_creator
 from bank_master_creator import (
+    check,
     create,
     escape,
     main,
@@ -279,6 +280,72 @@ class TestDeleteBeforeInsert:
 
         for path in out.iterdir():
             assert "DELETE FROM " in path.read_text(encoding="utf-8")
+
+
+class TestCheck:
+    def test_clean_input_report(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, ("0001", "002", "ﾆ", "二", "2")])
+
+        main(["--input", str(src), "--check", "--output-dir", str(tmp_path / "out")])
+
+        assert capsys.readouterr().out == (
+            "銀行: 1 件、支店: 2 件\n"
+            "銀行コード重複: 0\n"
+            "銀行+支店コード重複: 0\n"
+            "銀行行のない支店: 0\n"
+            "支店のない銀行: 0\n"
+            "ｶﾅが 15 文字 (切り詰めの可能性): 0\n"
+        )
+        assert not (tmp_path / "out").exists()
+
+    def test_duplicates_and_orphans_fail(self, tmp_path, capsys):
+        src = write_input(
+            tmp_path / "in.txt",
+            [BANK, BANK, BRANCH, BRANCH, ("0009", "001", "ﾅｼ", "無し", "2")],
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--check"])
+
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "銀行コード重複: 1 (0001)\n" in captured.out
+        assert "銀行+支店コード重複: 1 (0001-001)\n" in captured.out
+        assert "銀行行のない支店: 1 (0009-001)\n" in captured.out
+        assert captured.err == "エラー: データに問題があります。\n"
+
+    def test_warnings_only_exit_0(self, tmp_path, capsys):
+        src = write_input(
+            tmp_path / "in.txt",
+            [BANK, ("0002", "000", "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ", "長い銀行", "1"), BRANCH],
+        )
+
+        main(["--input", str(src), "--check"])
+
+        out = capsys.readouterr().out
+        assert "支店のない銀行: 1\n" in out
+        assert "ｶﾅが 15 文字 (切り詰めの可能性): 1\n" in out
+
+    def test_invalid_row_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH[:4]])
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--check"])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 2 行目: 項目数が 4 です。\n"
+
+    def test_check_function(self):
+        report = check([bank_row()], [branch_row(), branch_row()])
+
+        assert report.duplicate_branch_codes == ["0001-001"]
+        assert report.problems
+
+    def test_rejects_delete_before_insert(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--check", "--delete-before-insert"])
+
+        assert excinfo.value.code == 2
 
 
 class TestReadRows:
