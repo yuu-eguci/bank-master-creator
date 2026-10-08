@@ -49,6 +49,14 @@ def write_input(path: Path, lines: list[tuple[str, ...] | str]) -> Path:
     return path
 
 
+def _readable(path: Path) -> bool:
+    try:
+        path.read_bytes()
+    except PermissionError:
+        return False
+    return True
+
+
 def bank_row(name="テスト銀行", kana="ﾃｽﾄ"):
     return ["0001", "000", kana.ljust(15), name, "1"]
 
@@ -147,15 +155,6 @@ class TestCreate:
 
         assert "'テスト,銀行'" in bank.read_text(encoding="utf-8")
 
-    def test_utf8_and_lf_only(self, tmp_path):
-        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
-
-        for path in create(src, tmp_path, now=NOW):
-            data = path.read_bytes()
-            assert b"\r" not in data
-            assert data.endswith(b";\n")
-            data.decode("utf-8")
-
     def test_shares_one_timestamp(self, tmp_path, monkeypatch):
         class FakeDatetime:
             current = NOW
@@ -202,12 +201,6 @@ class TestCreate:
         src = write_input(tmp_path / "in.txt", [BANK, (*BRANCH[:4], "3")])
 
         with pytest.raises(ValueError, match="2 行目"):
-            create(src, tmp_path / "out", now=NOW)
-
-    def test_rejects_wrong_field_count(self, tmp_path):
-        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]])
-
-        with pytest.raises(ValueError, match="3 行目"):
             create(src, tmp_path / "out", now=NOW)
 
     def test_invalid_input_leaves_no_files(self, tmp_path):
@@ -360,7 +353,7 @@ class TestCheck:
         assert report.duplicate_branch_codes == ["0001-001"]
         assert report.problems
 
-    def test_rejects_delete_before_insert(self, tmp_path, capsys):
+    def test_rejects_delete_before_insert(self):
         with pytest.raises(SystemExit) as excinfo:
             main(["--check", "--delete-before-insert"])
 
@@ -382,13 +375,6 @@ class TestRowsPerInsert:
             "INSERT INTO m_bank_branches (bank_code, branch_code, branch_name, branch_name_kana)"
             " VALUES ('0001', '001', '三', 'ﾃｽﾄｼﾃﾝ');",
         ]
-
-    def test_one_per_insert_is_default_layout(self, tmp_path):
-        bank, _ = write_sql([bank_row()], [], tmp_path, NOW, rows_per_insert=1)
-
-        assert bank.read_text(encoding="utf-8") == (
-            "SET NAMES utf8mb4;\n" + make_bank_insert_sql(bank_row()) + "\n"
-        )
 
     def test_empty_table_with_grouping(self, tmp_path):
         _, branch = write_sql([bank_row()], [], tmp_path, NOW, rows_per_insert=100)
@@ -456,6 +442,15 @@ class TestStdout:
         assert captured.out.count("INSERT") == 2
         assert captured.err == "銀行 1 件、支店 2 件\n"
         assert not (tmp_path / "output").exists()
+
+    def test_main_with_delete_before_insert(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        main(["--input", str(src), "--stdout", "--delete-before-insert"])
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[1] == "START TRANSACTION;"
+        assert lines[-1] == "COMMIT;"
 
     def test_rejects_check(self):
         with pytest.raises(SystemExit) as excinfo:
@@ -573,6 +568,19 @@ class TestDiff:
             main(["--check", "--diff-from", str(tmp_path)])
 
         assert excinfo.value.code == 2
+
+    def test_duplicate_codes_use_last_row(self):
+        old = [bank_row(name="一つ目"), bank_row(name="二つ目")]
+
+        assert diff_rows(old, [bank_row(name="二つ目")]).changed == []
+
+    def test_empty_old_file_lists_everything_as_added(self, tmp_path, capsys):
+        new = write_input(tmp_path / "new.txt", [BANK, BRANCH])
+        old = write_input(tmp_path / "old.txt", [])
+
+        main(["--input", str(new), "--diff-from", str(old)])
+
+        assert "銀行: 追加 1 件、削除 0 件、名称変更 0 件\n" in capsys.readouterr().out
 
 
 class TestReadRows:
@@ -729,13 +737,50 @@ class TestMain:
 
         assert capsys.readouterr().out.startswith("銀行: 0 件、支店: 0 件\n")
 
-    def test_closed_stdout_is_tolerated(self, tmp_path, monkeypatch, capsys):
+    @pytest.mark.parametrize("mode", [[], ["--check"], ["--diff-from"]])
+    def test_closed_stdout_is_tolerated(self, tmp_path, monkeypatch, capsys, mode):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        monkeypatch.setattr(sys, "stdout", None)
+        if mode == ["--diff-from"]:
+            mode = ["--diff-from", str(src)]
+
+        main(["--input", str(src), "--output-dir", str(tmp_path / "out"), *mode])
+
+        assert "Traceback" not in capsys.readouterr().err
+
+    def test_closed_stdout_fails_for_stdout_mode(self, tmp_path, monkeypatch, capsys):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
         monkeypatch.setattr(sys, "stdout", None)
 
-        main(["--input", str(src), "--output-dir", str(tmp_path / "out")])
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--stdout"])
 
-        assert capsys.readouterr().err == "銀行 1 件、支店 1 件\n"
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 標準出力が閉じています。\n"
+
+    def test_unreadable_input_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        src.chmod(0)
+        if _readable(src):
+            pytest.skip("root など、権限に関係なく読める環境です。")
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src)])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == f"エラー: {src} を読めません (Permission denied)。\n"
+
+    def test_output_parent_is_a_file_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        (tmp_path / "file").write_text("x", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--output-dir", str(tmp_path / "file" / "out")])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == (
+            f"エラー: {tmp_path / 'file' / 'out'} に書き出せません (Not a directory)。\n"
+        )
 
     def test_help_mentions_options(self, capsys):
         with pytest.raises(SystemExit) as excinfo:

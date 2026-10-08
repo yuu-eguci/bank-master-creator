@@ -15,8 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import NoReturn, TextIO
 
-# 元データ (既定値)。
-ORIGINAL_DATA = "ginkositen.txt"
+# 入力ファイルの既定値です。
+DEFAULT_INPUT = "ginkositen.txt"
 
 # カラムのインデックス。
 # [0]銀行コード [1]支店コード [2]名前ｶﾅ [3]銀行名or支店名 [4]1なら銀行行、2なら支店行
@@ -55,16 +55,26 @@ def quote(value: str) -> str:
     return f"'{escape(value)}'"
 
 
-BANK_TABLE = ("m_banks", "bank_code, bank_name, bank_name_kana")
-BRANCH_TABLE = ("m_bank_branches", "bank_code, branch_code, branch_name, branch_name_kana")
+Table = tuple[str, str]  # (テーブル名, カラム並び)
+BANK_TABLE: Table = ("m_banks", "bank_code, bank_name, bank_name_kana")
+BRANCH_TABLE: Table = ("m_bank_branches", "bank_code, branch_code, branch_name, branch_name_kana")
+
+
+def _kana(row: list[str]) -> str:
+    # 元データのｶﾅは 15 桁に半角スペースで埋められているので、それだけを取り除きます。
+    return row[NAME_KANA].rstrip(" ")
+
+
+def _branch_key(row: list[str]) -> str:
+    return f"{row[BANK_CODE]}-{row[BRANCH_CODE]}"
 
 
 def _bank_values(row: list[str]) -> str:
-    return ", ".join(quote(v) for v in (row[BANK_CODE], row[NAME], row[NAME_KANA].rstrip(" ")))
+    return ", ".join(quote(v) for v in (row[BANK_CODE], row[NAME], _kana(row)))
 
 
 def _branch_values(row: list[str]) -> str:
-    values = (row[BANK_CODE], row[BRANCH_CODE], row[NAME], row[NAME_KANA].rstrip(" "))
+    values = (row[BANK_CODE], row[BRANCH_CODE], row[NAME], _kana(row))
     return ", ".join(quote(v) for v in values)
 
 
@@ -131,9 +141,6 @@ def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
     except csv.Error as e:
         raise ValueError(f"{reader.line_num} 行目付近: CSV として読めません ({e})") from None
     return banks, branches
-
-
-Table = tuple[str, str]  # (テーブル名, カラム並び)
 
 
 def _write_tables(
@@ -262,7 +269,7 @@ def _duplicates(keys: list[str]) -> list[str]:
 def check(banks: list[list[str]], branches: list[list[str]]) -> Report:
     """銀行行・支店行の整合性を検査します。"""
     bank_codes = [row[BANK_CODE] for row in banks]
-    branch_keys = [f"{row[BANK_CODE]}-{row[BRANCH_CODE]}" for row in branches]
+    branch_keys = [_branch_key(row) for row in branches]
     bank_code_set = set(bank_codes)
     branch_bank_codes = {row[BANK_CODE] for row in branches}
     return Report(
@@ -276,9 +283,7 @@ def check(banks: list[list[str]], branches: list[list[str]]) -> Report:
             if row[BANK_CODE] not in bank_code_set
         ],
         banks_without_branches=sum(code not in branch_bank_codes for code in bank_codes),
-        truncated_kana=sum(
-            len(row[NAME_KANA].rstrip(" ")) >= KANA_WIDTH for row in banks + branches
-        ),
+        truncated_kana=sum(len(_kana(row)) >= KANA_WIDTH for row in banks + branches),
     )
 
 
@@ -296,7 +301,7 @@ def _row_key(row: list[str]) -> tuple[str, str]:
 
 
 def _row_value(row: list[str]) -> tuple[str, str]:
-    return row[NAME], row[NAME_KANA].rstrip(" ")
+    return row[NAME], _kana(row)
 
 
 def diff_rows(old: list[list[str]], new: list[list[str]]) -> Diff:
@@ -315,7 +320,7 @@ def diff_rows(old: list[list[str]], new: list[list[str]]) -> Diff:
 
 
 def _code(row: list[str]) -> str:
-    return row[BANK_CODE] if row[ROW_FLAG] == ROW_BANK else f"{row[BANK_CODE]}-{row[BRANCH_CODE]}"
+    return row[BANK_CODE] if row[ROW_FLAG] == ROW_BANK else _branch_key(row)
 
 
 def _name(row: list[str]) -> str:
@@ -325,11 +330,12 @@ def _name(row: list[str]) -> str:
 
 def diff_lines(banks: Diff, branches: Diff) -> list[str]:
     """--diff-from の表示行を作ります。"""
+    labeled = (("銀行", banks), ("支店", branches))
     lines = [
         f"{label}: 追加 {len(d.added)} 件、削除 {len(d.removed)} 件、名称変更 {len(d.changed)} 件"
-        for label, d in (("銀行", banks), ("支店", branches))
+        for label, d in labeled
     ]
-    for label, d in (("銀行", banks), ("支店", branches)):
+    for label, d in labeled:
         lines += [f"+ {label} {_code(row)} {_name(row)}" for row in d.added]
         lines += [f"- {label} {_code(row)} {_name(row)}" for row in d.removed]
         lines += [f"~ {label} {_code(old)} {_name(old)} → {_name(new)}" for old, new in d.changed]
@@ -352,7 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path(ORIGINAL_DATA),
+        default=Path(DEFAULT_INPUT),
         help="入力ファイル (cp932。既定: %(default)s)",
     )
     parser.add_argument(
@@ -427,6 +433,8 @@ def _read_or_fail(path: Path) -> tuple[list[list[str]], list[list[str]]]:
             "(Docker で入力ファイルがないまま実行すると空のディレクトリができます。"
             "削除してから入力ファイルを置いてください。)"
         )
+    except OSError as e:
+        _fail(f"{path} を読めません ({e.strerror})。")
     except ValueError as e:
         _fail(str(e))
 
@@ -453,6 +461,8 @@ def _run(args: argparse.Namespace) -> None:
         print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
         return
     if args.stdout:
+        if sys.stdout is None:
+            _fail("標準出力が閉じています。")
         if isinstance(sys.stdout, io.TextIOWrapper):
             # Windows など、標準出力が UTF-8 でない環境のためです。
             sys.stdout.reconfigure(encoding="utf-8", newline="\n")
