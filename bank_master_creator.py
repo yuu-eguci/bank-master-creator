@@ -119,28 +119,44 @@ def write_sql(
     branches: list[list[str]],
     output_dir: Path,
     now: datetime | None = None,
+    *,
+    delete_before_insert: bool = False,
 ) -> tuple[Path, Path]:
-    """output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出し、2 つのパスを返します。"""
+    """output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出し、2 つのパスを返します。
+
+    delete_before_insert が真なら、トランザクション内でテーブルを空にしてから INSERT します。
+    """
     prefix = (now or datetime.now()).strftime("(%Y%m%d_%H%M%S)")
     output_dir.mkdir(parents=True, exist_ok=True)
     bank_path = output_dir / f"{prefix}銀行マスタINSERT.sql"
     branch_path = output_dir / f"{prefix}支店マスタINSERT.sql"
     bank_lines = [make_bank_insert_sql(row) + "\n" for row in banks]
     branch_lines = [make_branch_insert_sql(row) + "\n" for row in branches]
-    for path, lines in ((bank_path, bank_lines), (branch_path, branch_lines)):
+    targets = ((bank_path, "m_banks", bank_lines), (branch_path, "m_bank_branches", branch_lines))
+    for path, table, lines in targets:
         with path.open("w", encoding="utf-8", newline="\n") as f:
             f.write(HEADER)
+            if delete_before_insert:
+                f.write(f"START TRANSACTION;\nDELETE FROM {table};\n")
             f.writelines(lines)
+            if delete_before_insert:
+                f.write("COMMIT;\n")
     return bank_path, branch_path
 
 
-def create(input_path: Path, output_dir: Path, now: datetime | None = None) -> tuple[Path, Path]:
+def create(
+    input_path: Path,
+    output_dir: Path,
+    now: datetime | None = None,
+    *,
+    delete_before_insert: bool = False,
+) -> tuple[Path, Path]:
     """input_path を読み、output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出します。
 
     不正な行があれば ValueError を送出します。その場合ファイルは作りません。
     """
     banks, branches = read_rows(input_path)
-    return write_sql(banks, branches, output_dir, now)
+    return write_sql(banks, branches, output_dir, now, delete_before_insert=delete_before_insert)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -150,6 +166,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("output"), help="出力先ディレクトリ"
+    )
+    parser.add_argument(
+        "--delete-before-insert",
+        action="store_true",
+        help="トランザクション内でテーブルを空にしてから INSERT する (入れ直し用)",
     )
     return parser.parse_args(argv)
 
@@ -173,7 +194,10 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as e:
         _fail(str(e))
-    for path in write_sql(banks, branches, args.output_dir):
+    paths = write_sql(
+        banks, branches, args.output_dir, delete_before_insert=args.delete_before_insert
+    )
+    for path in paths:
         print(path)
     print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
 

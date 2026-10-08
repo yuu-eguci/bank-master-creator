@@ -218,6 +218,69 @@ class TestCreate:
         assert "'㈱テスト'" in bank.read_text(encoding="utf-8")
 
 
+class TestDeleteBeforeInsert:
+    def test_default_has_no_transaction(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        bank, _ = create(src, tmp_path, now=NOW)
+
+        assert bank.read_text(encoding="utf-8") == (
+            "SET NAMES utf8mb4;\n" + make_bank_insert_sql(list(BANK)) + "\n"
+        )
+
+    def test_bank_file_layout(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        bank, _ = create(src, tmp_path, now=NOW, delete_before_insert=True)
+
+        assert bank.read_text(encoding="utf-8").splitlines() == [
+            "SET NAMES utf8mb4;",
+            "START TRANSACTION;",
+            "DELETE FROM m_banks;",
+            make_bank_insert_sql(list(BANK)),
+            "COMMIT;",
+        ]
+
+    def test_branch_file_deletes_branch_table_only(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        _, branch = create(src, tmp_path, now=NOW, delete_before_insert=True)
+
+        text = branch.read_text(encoding="utf-8")
+        assert "DELETE FROM m_bank_branches;\n" in text
+        assert "m_banks;" not in text
+
+    def test_no_rows_still_clears_table(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK])
+
+        _, branch = create(src, tmp_path, now=NOW, delete_before_insert=True)
+
+        assert branch.read_text(encoding="utf-8").splitlines() == [
+            "SET NAMES utf8mb4;",
+            "START TRANSACTION;",
+            "DELETE FROM m_bank_branches;",
+            "COMMIT;",
+        ]
+
+    def test_lf_and_utf8(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        for path in create(src, tmp_path, now=NOW, delete_before_insert=True):
+            data = path.read_bytes()
+            assert b"\r" not in data
+            assert data.endswith(b"COMMIT;\n")
+            data.decode("utf-8")
+
+    def test_main_flag(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        out = tmp_path / "out"
+
+        main(["--input", str(src), "--output-dir", str(out), "--delete-before-insert"])
+
+        for path in out.iterdir():
+            assert "DELETE FROM " in path.read_text(encoding="utf-8")
+
+
 class TestReadRows:
     def test_splits_banks_and_branches(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
