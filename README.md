@@ -40,13 +40,13 @@ docker compose run --rm --build app
 | `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。 |
 | `--output-dir PATH` | 出力先ディレクトリです (既定: `output/`)。 |
 | `--no-timestamp` | ファイル名を `銀行マスタINSERT.sql`・`支店マスタINSERT.sql` に固定します。スクリプトから扱いやすく、前回の出力と diff しやすくなります。 |
-| `--stdout` | ファイルを作らず、銀行マスタ・支店マスタの SQL を 1 つにまとめて標準出力に書きます (`SET NAMES` は先頭に 1 回、`--delete-before-insert` では両テーブルを 1 つのトランザクションで入れ直します)。例: `docker compose run --rm app --stdout --delete-before-insert \| mysql -u user -p db` (`--build` を付けるとビルドのログが混ざるので、先にビルドしておきます) |
+| `--stdout` | ファイルを作らず、銀行マスタ・支店マスタの SQL を 1 つにまとめて標準出力に書きます (`SET NAMES` は先頭に 1 回、`--delete-before-insert` では両テーブルを 1 つのトランザクションで入れ直します)。例: `docker compose run --rm app --stdout --delete-before-insert \| mysql -u user -p db` (`--build` を付けるとビルドのログが混ざるので、先にビルドしておきます)。 |
 | `--rows-per-insert N` | 1 つの INSERT 文に N 行をまとめます (既定: 1)。`VALUES` の各行は改行で区切ります。手元の MySQL 8.4 では支店 31048 件の読み込みが、既定で約 24 秒、`--delete-before-insert` (トランザクション) で約 1.6 秒、`--rows-per-insert 500` で約 0.3 秒でした。 |
 | `--delete-before-insert` | 入れ直し (洗い替え) 用です。各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。 |
 | `--check` | ファイルを作らず、件数と検査結果を表示します。銀行コードの重複、銀行+支店コードの重複、銀行行のない支店は該当コード (10 件まで) も表示し、あれば終了コード 1 です。支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性) は件数のみです。 |
 | `--diff-from OLD` | ファイルを作らず、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します。再ダウンロードしたデータを入れ直す前の確認に使います。コードが重複しているデータでは後の行を使うので、先に `--check` で確認してください。 |
 
-`--check`、`--diff-from` は他のオプションと同時に指定できません (`--stdout` と `--delete-before-insert` は組み合わせられます)。
+`--delete-before-insert`、`--check`、`--diff-from` は同時に指定できません。`--stdout` も `--check`、`--diff-from` とは同時に指定できません。オプションの指定が不正な場合は使い方を表示して終了コード 2 で止まります。
 
 ## DB definition
 

@@ -1,4 +1,5 @@
 import io
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -388,6 +389,11 @@ class TestRowsPerInsert:
             "SET NAMES utf8mb4;\n" + make_bank_insert_sql(bank_row()) + "\n"
         )
 
+    def test_empty_table_with_grouping(self, tmp_path):
+        _, branch = write_sql([bank_row()], [], tmp_path, NOW, rows_per_insert=100)
+
+        assert branch.read_text(encoding="utf-8") == "SET NAMES utf8mb4;\n"
+
     def test_main_flag_with_delete_before_insert(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
         out = tmp_path / "out"
@@ -404,11 +410,12 @@ class TestRowsPerInsert:
         assert sum(line.startswith("INSERT") for line in lines) == 1
 
     @pytest.mark.parametrize("value", ["0", "-1", "x"])
-    def test_rejects_non_positive(self, value):
+    def test_rejects_non_positive(self, value, capsys):
         with pytest.raises(SystemExit) as excinfo:
             main(["--rows-per-insert", value])
 
         assert excinfo.value.code == 2
+        assert f"{value!r} は不正です。1 以上の整数を指定してください。" in capsys.readouterr().err
 
 
 class TestStdout:
@@ -454,6 +461,26 @@ class TestStdout:
             main(["--stdout", "--check"])
 
         assert excinfo.value.code == 2
+
+    def test_broken_pipe_has_no_traceback(self, tmp_path):
+        """mysql が途中で終了してパイプが閉じても、トレースバックを出しません。"""
+        rows = [("0001", f"{i:03d}", "ｼﾃﾝ", f"支店{i}", "2") for i in range(1000, 4000)]
+        src = write_input(tmp_path / "in.txt", [BANK, *rows])
+        script = Path(__file__).parent.parent / "bank_master_creator.py"
+
+        proc = subprocess.Popen(  # noqa: S603 (引数は固定です)
+            [sys.executable, str(script), "--input", str(src), "--stdout"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert proc.stdout is not None
+        proc.stdout.read(100)
+        proc.stdout.close()
+        _, stderr = proc.communicate(timeout=30)
+
+        assert proc.returncode == 1
+        assert b"Traceback" not in stderr
+        assert "標準出力に書き出せません".encode() in stderr
 
 
 class TestNoTimestamp:
@@ -621,7 +648,7 @@ class TestMain:
             main(["--input", str(src), "--output-dir", str(out)])
 
         assert excinfo.value.code == 1
-        assert capsys.readouterr().err.startswith(f"エラー: {out} に書き出せません")
+        assert capsys.readouterr().err == f"エラー: {out} はディレクトリではありません。\n"
 
     def test_input_and_output_dir_options(self, tmp_path, capsys):
         src = write_input(tmp_path / "data.txt", [BANK, BRANCH])

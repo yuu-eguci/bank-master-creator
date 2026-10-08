@@ -6,6 +6,7 @@
 import argparse
 import csv
 import io
+import os
 import sys
 from collections import Counter
 from collections.abc import Iterator
@@ -336,19 +337,28 @@ def diff_lines(banks: Diff, branches: Diff) -> list[str]:
 
 
 def _positive_int(text: str) -> int:
-    value = int(text)
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
     if value < 1:
-        raise argparse.ArgumentTypeError("1 以上を指定してください。")
+        raise argparse.ArgumentTypeError(f"{text!r} は不正です。1 以上の整数を指定してください。")
     return value
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--input", type=Path, default=Path(ORIGINAL_DATA), help="入力ファイル (cp932)"
+        "--input",
+        type=Path,
+        default=Path(ORIGINAL_DATA),
+        help="入力ファイル (cp932。既定: %(default)s)",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("output"), help="出力先ディレクトリ"
+        "--output-dir",
+        type=Path,
+        default=Path("output"),
+        help="出力先ディレクトリ (既定: %(default)s)",
     )
     parser.add_argument(
         "--no-timestamp",
@@ -389,6 +399,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _fail(message: str) -> NoReturn:
+    # 標準出力をパイプした場合でも、先に出した内容の後ろにエラーが並ぶようにします。
+    sys.stdout.flush()
     print(f"エラー: {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -425,13 +437,20 @@ def main(argv: list[str] | None = None) -> None:
         if isinstance(sys.stdout, io.TextIOWrapper):
             # Windows など、標準出力が UTF-8 でない環境のためです。
             sys.stdout.reconfigure(encoding="utf-8", newline="\n")
-        write_sql_stream(
-            banks,
-            branches,
-            sys.stdout,
-            delete_before_insert=args.delete_before_insert,
-            rows_per_insert=args.rows_per_insert,
-        )
+        try:
+            write_sql_stream(
+                banks,
+                branches,
+                sys.stdout,
+                delete_before_insert=args.delete_before_insert,
+                rows_per_insert=args.rows_per_insert,
+            )
+            sys.stdout.flush()
+        except BrokenPipeError:
+            # パイプの先 (mysql など) が先に終了した場合です。
+            # 終了時の flush でまた失敗しないよう、標準出力を /dev/null に向けます。
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            _fail("標準出力に書き出せません (パイプの先が終了しました)。")
         _print_summary(banks, branches)
         return
     try:
@@ -443,6 +462,8 @@ def main(argv: list[str] | None = None) -> None:
             timestamp=not args.no_timestamp,
             rows_per_insert=args.rows_per_insert,
         )
+    except FileExistsError:
+        _fail(f"{args.output_dir} はディレクトリではありません。")
     except OSError as e:
         _fail(f"{args.output_dir} に書き出せません ({e.strerror})。")
     for path in paths:
@@ -451,6 +472,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _print_summary(banks: list[list[str]], branches: list[list[str]]) -> None:
+    sys.stdout.flush()
     print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
 
 
