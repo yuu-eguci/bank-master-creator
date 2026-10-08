@@ -51,7 +51,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 
 | オプション | 説明 |
 | --- | --- |
-| `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。 |
+| `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。`-` を指定すると標準入力から読みます。`--diff-from` の OLD にも `-` を使えます (両方は不可)。例: `docker compose run --rm -T app --input - --diff-from ginkositen.txt < new.txt` |
 | `--output-dir PATH` | 出力先ディレクトリです (既定: `output/`)。 |
 | `--bank-code CODES` | 指定した銀行 (4 桁のコード。カンマ区切りか複数回指定) とその支店だけを対象にします。開発用 DB に少量のデータを入れるときに使い、`--check` や `--diff-from` にも効きます。入力にないコードを指定するとエラーです。例: `--bank-code 0001,0005 --stdout --delete-before-insert` |
 | `--no-timestamp` | ファイル名を `銀行マスタINSERT.sql`・`支店マスタINSERT.sql` に固定します。スクリプトから扱いやすく、前回の出力と diff しやすくなります。 |

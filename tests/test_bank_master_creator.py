@@ -606,6 +606,85 @@ class TestBankCode:
             filter_rows(banks, branches, ["0009"])
 
 
+class TestStdin:
+    @staticmethod
+    def feed(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(path.read_bytes())))
+
+    def test_check_from_stdin(self, tmp_path, monkeypatch, capsys):
+        self.feed(monkeypatch, write_input(tmp_path / "in.txt", [BANK, BRANCH]))
+
+        main(["--input", "-", "--check"])
+
+        assert capsys.readouterr().out.startswith("銀行: 1 件、支店: 1 件\n")
+
+    def test_stdout_from_stdin(self, tmp_path, monkeypatch, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
+        self.feed(monkeypatch, src)
+        expected = io.StringIO()
+        write_sql_stream(*read_rows(src), expected)
+
+        main(["--input", "-", "--stdout"])
+
+        captured = capsys.readouterr()
+        assert captured.out == expected.getvalue()
+        assert captured.err == "銀行 1 件、支店 2 件\n"
+
+    def test_writes_files_from_stdin(self, tmp_path, monkeypatch, capsys):
+        self.feed(monkeypatch, write_input(tmp_path / "in.txt", [BANK, BRANCH]))
+
+        main(["--input", "-", "--output-dir", str(tmp_path / "out")])
+
+        assert len(list((tmp_path / "out").iterdir())) == 2
+
+    def test_invalid_row_reports_line_number(self, tmp_path, monkeypatch, capsys):
+        self.feed(monkeypatch, write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]]))
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", "-", "--check"])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 3 行目: 項目数が 4 です。\n"
+
+    def test_diff_from_stdin_header(self, tmp_path, monkeypatch, capsys):
+        new = write_input(tmp_path / "new.txt", [BANK, BRANCH])
+        self.feed(monkeypatch, write_input(tmp_path / "old.txt", [BANK]))
+
+        main(["--input", str(new), "--diff-from", "-"])
+
+        assert capsys.readouterr().out.startswith(f"標準入力 → {new}\n")
+
+    def test_both_stdin_rejected(self):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", "-", "--diff-from", "-"])
+
+        assert excinfo.value.code == 2
+
+    def test_empty_stdin_exits_1(self, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", "-"])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 入力に行がありません。\n"
+
+    def test_subprocess_reads_binary_stdin(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        script = Path(__file__).parent.parent / "bank_master_creator.py"
+
+        proc = subprocess.run(  # noqa: S603 (引数は固定です)
+            [sys.executable, str(script), "--input", "-", "--check"],
+            input=src.read_bytes(),
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.decode("utf-8").startswith("銀行: 1 件、支店: 1 件\n")
+
+
 class TestNoTimestamp:
     def test_fixed_names(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])

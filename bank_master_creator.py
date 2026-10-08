@@ -106,10 +106,24 @@ def make_branch_insert_sql(row: list[str]) -> str:
     return _insert_sql(*BRANCH_TABLE, [_branch_values(row)])
 
 
+# --input / --diff-from にこれを指定すると標準入力から読みます。
+STDIN = Path("-")
+
+
+def _read_bytes(input_path: Path) -> bytes:
+    if input_path == STDIN:
+        return sys.stdin.buffer.read()
+    return input_path.read_bytes()
+
+
+def _display(path: Path) -> str:
+    return "標準入力" if path == STDIN else str(path)
+
+
 def _decoded_lines(input_path: Path) -> Iterator[str]:
     # 1 行ずつ cp932 でデコードし、失敗した行の番号を示します。
     # 改行は CRLF/LF/CR のどれでも構いません。
-    for line_num, raw in enumerate(input_path.read_bytes().splitlines(keepends=True), 1):
+    for line_num, raw in enumerate(_read_bytes(input_path).splitlines(keepends=True), 1):
         try:
             yield raw.decode("cp932")
         except UnicodeDecodeError:
@@ -118,7 +132,7 @@ def _decoded_lines(input_path: Path) -> Iterator[str]:
 
 
 def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
-    """input_path を読み、(銀行行, 支店行) を返します。
+    """input_path を読み、(銀行行, 支店行) を返します。input_path が STDIN なら標準入力を読みます。
 
     不正な行があれば ValueError を送出します。
     """
@@ -385,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         type=Path,
         default=Path(DEFAULT_INPUT),
-        help="入力ファイル (cp932。既定: %(default)s)",
+        help="入力ファイル (cp932。既定: %(default)s。- で標準入力)",
     )
     parser.add_argument(
         "--output-dir",
@@ -441,6 +455,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.stdout and (args.check or args.diff_from):
         parser.error("--stdout は --check, --diff-from と同時に指定できません。")
+    if args.input == STDIN and args.diff_from == STDIN:
+        parser.error("--input と --diff-from の両方を標準入力にはできません。")
     return args
 
 
@@ -505,7 +521,7 @@ def _run(args: argparse.Namespace) -> None:
         _fail("入力に行がありません。")
     if args.diff_from:
         old_banks, old_branches = _read_and_filter(args.diff_from, args.bank_code, strict=False)
-        print(f"{args.diff_from} → {args.input}")
+        print(f"{_display(args.diff_from)} → {_display(args.input)}")
         print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
         return
     if args.stdout:
