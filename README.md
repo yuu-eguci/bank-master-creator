@@ -33,6 +33,8 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 
 既定のファイル名には `(` `)` が含まれるので、シェルで指定するときは `"output/(20260102_030405)銀行マスタINSERT.sql"` のように引用符で囲みます。
 
+入力ファイルと出力ファイルの形式は [docs/format.md](docs/format.md) にまとめています。
+
 ## Usage
 
 - データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。

@@ -221,7 +221,11 @@ class TestCreate:
 
 
 def test_golden_fixture(tmp_path):
-    """fixtures/sample.txt からの出力が、保存済みの期待ファイルとバイト単位で一致します。"""
+    """fixtures/sample.txt からの出力が、保存済みの期待ファイルとバイト単位で一致します。
+
+    sample.txt は架空のデータで、cp932 特有の文字 (㈱)、ｶﾅの記号 (ｵ-ﾌﾟﾝ.ﾃｽﾄ)、
+    15 桁のｶﾅの詰め方、複数の銀行と支店の並びを含みます。
+    """
     fixtures = Path(__file__).parent / "fixtures"
 
     bank, branch = create(fixtures / "sample.txt", tmp_path, now=NOW)
