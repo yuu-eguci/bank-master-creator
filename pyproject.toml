@@ -1,7 +1,7 @@
 [project]
 name = "bank-master-creator"
 version = "1.0.0"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = []
 
 [dependency-groups]
@@ -13,7 +13,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "N", "S", "SIM", "PTH", "DTZ", "PT", "PL", "RUF"]
@@ -29,6 +29,7 @@ max-args = 6
 [tool.mypy]
 files = ["bank_master_creator.py", "tests"]
 strict = true
+python_version = "3.11"
 
 [[tool.mypy.overrides]]
 # テストは引数の型注釈を省略します。

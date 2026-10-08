@@ -26,7 +26,7 @@ docker compose run --rm --build app
 - データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。
 - Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
 - テストと lint と型チェック (mypy): `docker compose run --rm --build test`
-- Docker なし (Python 3.14): `python bank_master_creator.py`
+- Docker なし (Python 3.11 以上。CI では 3.11 と 3.14 で確認しています): `python bank_master_creator.py`
 - 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。
 - 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
 - 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外、引用符が閉じていない) があると、行番号を示してエラーで止まります。入力ファイルがない、cp932 として読めない、出力先に書き出せない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。

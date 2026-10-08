@@ -13,3 +13,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: docker compose run --rm --build test
+
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      # pip install --group は pip 25.1 以降が必要です。
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install --group dev
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - run: pytest
