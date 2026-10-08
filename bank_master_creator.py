@@ -15,6 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import NoReturn, TextIO
 
+if sys.version_info < (3, 11):  # noqa: UP036 (古い Python でのガードです)
+    # ここより下の型注釈 (X | None など) は古い Python では読み込み時に失敗するため、先に止めます。
+    sys.exit(f"エラー: Python 3.11 以上が必要です ({sys.version.split()[0]})。")
+
+# pyproject.toml の version と同じ値にします (テストで確認します)。
+__version__ = "1.1.0"
+
 # 入力ファイルの既定値です。
 DEFAULT_INPUT = "ginkositen.txt"
 
@@ -394,7 +401,9 @@ def _positive_int(text: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     """コマンドライン引数のパーサを作ります。"""
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        prog="bank_master_creator.py", description=__doc__.splitlines()[0]
+    )
     parser.add_argument(
         "--input",
         type=Path,
@@ -407,6 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("output"),
         help="出力先ディレクトリ (既定: %(default)s)",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument(
         "--bank-code",
         type=_bank_codes,

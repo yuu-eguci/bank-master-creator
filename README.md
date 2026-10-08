@@ -40,7 +40,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 - データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。
 - Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
 - テストと lint と型チェック (mypy): `docker compose run --rm --build test`
-- Docker なし (Python 3.11 以上。CI では 3.11 と 3.14 で確認しています): `python bank_master_creator.py`
+- Docker なし (Python 3.11 以上。CI では 3.11 と 3.14 で確認しています。古い Python では `エラー:` で始まる 1 行を表示して止まります): `python bank_master_creator.py`
 - 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。
 - 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
 - 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外、引用符が閉じていない) があると、行番号を示してエラーで止まります (引用符のエラーは検出した行なので目安です)。入力ファイルがない (Docker では空のディレクトリ `ginkositen.txt` ができるので削除してください)、入力に行が 1 つもない (`--check` を除く)、cp932 として読めない、出力先に書き出せない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。
@@ -59,6 +59,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 | `--stdout` | ファイルを作らず、銀行マスタ・支店マスタの SQL を 1 つにまとめて標準出力に書きます (`SET NAMES` は先頭に 1 回、`--delete-before-insert` では両テーブルを 1 つのトランザクションで入れ直します)。mysql へ直接流し込むときに使います (下の例を参照)。 |
 | `--delete-before-insert` | 入れ直し (洗い替え) 用です。各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。 |
 | `--check` | ファイルを作らず、件数と検査結果を表示します。銀行コードの重複、銀行+支店コードの重複、銀行行のない支店は該当コード (10 件まで) も表示し、あれば終了コード 1 です。支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性) は件数のみです。 |
+| `--version` | バージョンを表示します。 |
 | `--diff-from OLD` | ファイルを作らず、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します (先頭行に `OLD → 新ファイル` を示します)。再ダウンロードしたデータを入れ直す前の確認に使います。コードが重複しているデータでは後の行を使うので、先に `--check` で確認してください。 |
 
 `--stdout` で mysql へ直接流し込む例です (`docker compose run` に `--build` を付けるとビルドのログが混ざるので、先にビルドしておきます)。

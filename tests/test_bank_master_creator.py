@@ -1,6 +1,7 @@
 import io
 import subprocess
 import sys
+import tomllib
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1006,3 +1007,34 @@ def test_readme_options_table_matches_parser():
     }
 
     assert documented == parser_options - {"-h", "--help"}
+
+
+def test_version_matches_pyproject(capsys):
+    pyproject = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text("utf-8"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--version"])
+
+    assert excinfo.value.code == 0
+    assert capsys.readouterr().out == f"bank_master_creator.py {pyproject['project']['version']}\n"
+    assert bank_master_creator.__version__ == pyproject["project"]["version"]
+
+
+def test_old_python_is_rejected_with_one_line(tmp_path):
+    script = Path(__file__).parent.parent / "bank_master_creator.py"
+    source = script.read_text("utf-8").replace(
+        "sys.version_info < (3, 11)", "sys.version_info < (99, 0)"
+    )
+    patched = tmp_path / "patched.py"
+    patched.write_text(source, "utf-8")
+
+    proc = subprocess.run(  # noqa: S603 (引数は固定です)
+        [sys.executable, str(patched), "--version"], capture_output=True, timeout=30, check=False
+    )
+
+    assert proc.returncode == 1
+    assert (
+        proc.stderr.decode("utf-8")
+        == f"エラー: Python 3.11 以上が必要です ({sys.version.split()[0]})。\n"
+    )
+    assert proc.stdout == b""
