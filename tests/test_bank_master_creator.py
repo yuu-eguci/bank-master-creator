@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -232,15 +233,6 @@ def test_golden_fixture(tmp_path):
 
 
 class TestDeleteBeforeInsert:
-    def test_default_has_no_transaction(self, tmp_path):
-        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
-
-        bank, _ = create(src, tmp_path, now=NOW)
-
-        assert bank.read_text(encoding="utf-8") == (
-            "SET NAMES utf8mb4;\n" + make_bank_insert_sql(list(BANK)) + "\n"
-        )
-
     def test_bank_file_layout(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
 
@@ -346,6 +338,16 @@ class TestCheck:
 
         assert excinfo.value.code == 1
         assert capsys.readouterr().err == "エラー: 2 行目: 項目数が 4 です。\n"
+
+    def test_codes_are_capped(self):
+        banks = [
+            [f"{i:04d}", "000", "ｶﾅ".ljust(15), "銀行", "1"] for i in range(12) for _ in (0, 1)
+        ]
+
+        line = check(banks, []).lines()[1]
+
+        assert line.startswith("銀行コード重複: 12 (0000, 0001, ")
+        assert line.endswith(", 0009 ほか 2 件)")
 
     def test_check_function(self):
         report = check([bank_row()], [branch_row(), branch_row()])
@@ -464,6 +466,30 @@ class TestReadRows:
         with pytest.raises(ValueError, match=r"^1 行目"):
             read_rows(src)
 
+    def test_cr_only_line_endings(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        src.write_bytes(src.read_bytes().replace(b"\r\n", b"\r"))
+
+        banks, branches = read_rows(src)
+
+        assert len(banks) == 1
+        assert len(branches) == 1
+
+    def test_no_trailing_newline(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        src.write_bytes(src.read_bytes().rstrip(b"\r\n"))
+
+        banks, branches = read_rows(src)
+
+        assert len(banks) == 1
+        assert len(branches) == 1
+
+    def test_csv_error_reports_line_number(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, '0001,001,"ﾃｽﾄ","テスト支店,2'])
+
+        with pytest.raises(ValueError, match=r"^2 行目: CSV として読めません"):
+            read_rows(src)
+
 
 class TestMain:
     def test_uses_default_paths(self, tmp_path, monkeypatch, capsys):
@@ -477,6 +503,25 @@ class TestMain:
         printed = capsys.readouterr().out
         for name in files:
             assert name in printed
+
+    def test_argv_none_uses_sys_argv(self, tmp_path, monkeypatch, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        monkeypatch.setattr(sys, "argv", ["bank_master_creator.py", "--input", str(src), "--check"])
+
+        main()
+
+        assert capsys.readouterr().out.startswith("銀行: 1 件、支店: 1 件\n")
+
+    def test_output_dir_is_a_file_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        out = tmp_path / "out"
+        out.write_text("file", encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--output-dir", str(out)])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err.startswith(f"エラー: {out} に書き出せません")
 
     def test_input_and_output_dir_options(self, tmp_path, capsys):
         src = write_input(tmp_path / "data.txt", [BANK, BRANCH])

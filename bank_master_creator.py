@@ -84,13 +84,13 @@ def make_branch_insert_sql(row: list[str]) -> str:
 
 def _decoded_lines(input_path: Path) -> Iterator[str]:
     # 1 行ずつ cp932 でデコードし、失敗した行の番号を示します。
-    with input_path.open("rb") as f:
-        for line_num, raw in enumerate(f, 1):
-            try:
-                yield raw.decode("cp932")
-            except UnicodeDecodeError:
-                msg = f"{line_num} 行目: cp932 として読めません (UTF-8 で保存していませんか?)"
-                raise ValueError(msg) from None
+    # 改行は CRLF/LF/CR のどれでも構いません。
+    for line_num, raw in enumerate(input_path.read_bytes().splitlines(keepends=True), 1):
+        try:
+            yield raw.decode("cp932")
+        except UnicodeDecodeError:
+            msg = f"{line_num} 行目: cp932 として読めません (UTF-8 で保存していませんか?)"
+            raise ValueError(msg) from None
 
 
 def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
@@ -100,19 +100,22 @@ def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
     """
     banks: list[list[str]] = []
     branches: list[list[str]] = []
-    reader = csv.reader(_decoded_lines(input_path))
-    for row in reader:
-        if not row:
-            continue
-        if len(row) != COLUMNS:
-            raise ValueError(f"{reader.line_num} 行目: 項目数が {len(row)} です。")
-        flag = row[ROW_FLAG]
-        if flag == ROW_BANK:
-            banks.append(row)
-        elif flag == ROW_BRANCH:
-            branches.append(row)
-        else:
-            raise ValueError(f"{reader.line_num} 行目: 種別フラグ {flag!r} は不明です。")
+    reader = csv.reader(_decoded_lines(input_path), strict=True)
+    try:
+        for row in reader:
+            if not row:
+                continue
+            if len(row) != COLUMNS:
+                raise ValueError(f"{reader.line_num} 行目: 項目数が {len(row)} です。")
+            flag = row[ROW_FLAG]
+            if flag == ROW_BANK:
+                banks.append(row)
+            elif flag == ROW_BRANCH:
+                branches.append(row)
+            else:
+                raise ValueError(f"{reader.line_num} 行目: 種別フラグ {flag!r} は不明です。")
+    except csv.Error as e:
+        raise ValueError(f"{reader.line_num} 行目: CSV として読めません ({e})") from None
     return banks, branches
 
 
@@ -173,6 +176,8 @@ def create(
 
 # 元データのｶﾅは 15 文字で切られているため、15 文字ちょうどなら切り詰めの可能性があります。
 KANA_WIDTH = 15
+# --check で表示するコードの最大数です。
+MAX_CODES_SHOWN = 10
 
 
 @dataclass
@@ -195,8 +200,11 @@ class Report:
 
     def lines(self) -> list[str]:
         def with_codes(label: str, codes: list[str]) -> str:
-            suffix = f" ({', '.join(codes)})" if codes else ""
-            return f"{label}: {len(codes)}{suffix}"
+            shown = ", ".join(codes[:MAX_CODES_SHOWN])
+            rest = len(codes) - MAX_CODES_SHOWN
+            if rest > 0:
+                shown += f" ほか {rest} 件"
+            return f"{label}: {len(codes)}" + (f" ({shown})" if codes else "")
 
         return [
             f"銀行: {self.banks} 件、支店: {self.branches} 件",
@@ -353,13 +361,16 @@ def main(argv: list[str] | None = None) -> None:
         if report.problems:
             _fail("データに問題があります。")
         return
-    paths = write_sql(
-        banks,
-        branches,
-        args.output_dir,
-        delete_before_insert=args.delete_before_insert,
-        timestamp=not args.no_timestamp,
-    )
+    try:
+        paths = write_sql(
+            banks,
+            branches,
+            args.output_dir,
+            delete_before_insert=args.delete_before_insert,
+            timestamp=not args.no_timestamp,
+        )
+    except OSError as e:
+        _fail(f"{args.output_dir} に書き出せません ({e.strerror})。")
     for path in paths:
         print(path)
     print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
