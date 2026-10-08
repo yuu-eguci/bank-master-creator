@@ -484,7 +484,7 @@ class TestDiff:
         old = [bank_row(), branch_row(), ["0001", "002", "ｷｴﾙ".ljust(15), "消える", "2"]]
         new = [
             bank_row(name="新テスト銀行"),
-            branch_row(kana="ﾃｽﾄｼﾃﾝ"),
+            branch_row(kana="ｼﾝﾃｽﾄｼﾃﾝ"),
             ["0001", "003", "ﾌｴﾙ".ljust(15), "増える", "2"],
         ]
 
@@ -492,7 +492,13 @@ class TestDiff:
 
         assert result.added == [new[2]]
         assert result.removed == [old[2]]
-        assert result.changed == [(old[0], new[0])]
+        assert result.changed == [(old[0], new[0]), (old[1], new[1])]
+
+    def test_padding_only_difference_is_not_a_change(self):
+        old = [branch_row(kana="ｱ")]
+        new = [["0001", "001", "ｱ", "テスト支店", "2"]]
+
+        assert diff_rows(old, new).changed == []
 
     def test_main_report(self, tmp_path, capsys):
         old = write_input(
@@ -509,7 +515,7 @@ class TestDiff:
             ],
         )
 
-        main(["--input", str(new), "--diff-from", str(old)])
+        main(["--input", str(new), "--diff-from", str(old), "--output-dir", str(tmp_path / "out")])
 
         assert capsys.readouterr().out == (
             "銀行: 追加 1 件、削除 1 件、名称変更 0 件\n"
@@ -519,7 +525,7 @@ class TestDiff:
             "+ 支店 0003-001 ウ支店 (ｳ)\n"
             "~ 支店 0001-001 テスト支店 (ﾃｽﾄｼﾃﾝ) → テスト本店 (ﾃｽﾄｼﾃﾝ)\n"
         )
-        assert not (tmp_path / "output").exists()
+        assert not (tmp_path / "out").exists()
 
     def test_missing_old_file_exits_1(self, tmp_path, capsys):
         new = write_input(tmp_path / "new.txt", [BANK, BRANCH])
@@ -579,9 +585,9 @@ class TestReadRows:
         assert len(branches) == 1
 
     def test_csv_error_reports_line_number(self, tmp_path):
-        src = write_input(tmp_path / "in.txt", [BANK, '0001,001,"ﾃｽﾄ","テスト支店,2'])
+        src = write_input(tmp_path / "in.txt", [BANK, '0001,001,"ﾃｽﾄ","テスト支店,2', BRANCH])
 
-        with pytest.raises(ValueError, match=r"^2 行目: CSV として読めません"):
+        with pytest.raises(ValueError, match=r"^3 行目付近: CSV として読めません"):
             read_rows(src)
 
 

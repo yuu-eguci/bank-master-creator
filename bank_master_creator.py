@@ -128,7 +128,7 @@ def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
             else:
                 raise ValueError(f"{reader.line_num} 行目: 種別フラグ {flag!r} は不明です。")
     except csv.Error as e:
-        raise ValueError(f"{reader.line_num} 行目: CSV として読めません ({e})") from None
+        raise ValueError(f"{reader.line_num} 行目付近: CSV として読めません ({e})") from None
     return banks, branches
 
 

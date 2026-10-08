@@ -2,9 +2,10 @@
 output
 *.sql
 !tests/fixtures/*.sql
-__pycache__
-.pytest_cache
-.ruff_cache
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
 ginkositen.txt
 docs
 .github
