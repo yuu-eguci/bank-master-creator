@@ -27,8 +27,10 @@ docker compose run --rm --build app
 - Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
 - テストと lint: `docker compose run --rm --build test`
 - Docker なし (Python 3.14): `python bank_master_creator.py`
+- 入力・出力先の変更: `--input PATH` と `--output-dir PATH` で指定します (既定は `ginkositen.txt` と `output/`)。Docker では `docker compose run --rm app --help` のように引数をそのまま渡せます。
+- 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。
 - 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
-- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外) があると、行番号を示してエラーで止まります。
+- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外) があると、行番号を示してエラーで止まります。入力ファイルがない、または cp932 として読めない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。
 
 ## DB definition
 

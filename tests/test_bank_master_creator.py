@@ -11,6 +11,7 @@ from bank_master_creator import (
     make_bank_insert_sql,
     make_branch_insert_sql,
     quote,
+    read_rows,
 )
 
 NOW = datetime(2026, 1, 2, 3, 4, 5)
@@ -217,14 +218,105 @@ class TestCreate:
         assert "'㈱テスト'" in bank.read_text(encoding="utf-8")
 
 
-def test_main_uses_default_paths(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
-    write_input(tmp_path / "ginkositen.txt", [BANK, BRANCH])
+class TestReadRows:
+    def test_splits_banks_and_branches(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
 
-    main()
+        banks, branches = read_rows(src)
 
-    files = sorted(p.name for p in (tmp_path / "output").iterdir())
-    assert len(files) == 2
-    printed = capsys.readouterr().out
-    for name in files:
-        assert name in printed
+        assert banks == [list(BANK[:2]) + [BANK[2].ljust(15)] + list(BANK[3:])]
+        assert len(branches) == 2
+
+    def test_decode_error_reports_line_number(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        src.write_bytes(src.read_bytes() + '0002,000,"ﾃｽﾄ","テスト",1\r\n'.encode())
+
+        with pytest.raises(ValueError, match=r"^3 行目: .*UTF-8"):
+            read_rows(src)
+
+    def test_utf8_bom_reports_first_line(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        src.write_bytes(b"\xef\xbb\xbf" + src.read_bytes())
+
+        with pytest.raises(ValueError, match="^1 行目"):
+            read_rows(src)
+
+
+class TestMain:
+    def test_uses_default_paths(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        write_input(tmp_path / "ginkositen.txt", [BANK, BRANCH])
+
+        main([])
+
+        files = sorted(p.name for p in (tmp_path / "output").iterdir())
+        assert len(files) == 2
+        printed = capsys.readouterr().out
+        for name in files:
+            assert name in printed
+
+    def test_input_and_output_dir_options(self, tmp_path, capsys):
+        src = write_input(tmp_path / "data.txt", [BANK, BRANCH])
+        out = tmp_path / "sql"
+
+        main(["--input", str(src), "--output-dir", str(out)])
+
+        assert len(list(out.iterdir())) == 2
+        assert str(out) in capsys.readouterr().out
+
+    def test_prints_summary_to_stderr(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
+
+        main(["--input", str(src), "--output-dir", str(tmp_path / "out")])
+
+        captured = capsys.readouterr()
+        assert captured.err == "銀行 1 件、支店 2 件\n"
+        assert "件" not in captured.out
+
+    def test_invalid_row_exits_1_without_traceback(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]])
+        out = tmp_path / "out"
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--output-dir", str(out)])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 3 行目: 項目数が 4 です。\n"
+        assert not out.exists()
+
+    def test_missing_input_exits_1(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(tmp_path / "nothing.txt")])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == f"エラー: {tmp_path / 'nothing.txt'} が見つかりません。\n"
+
+    def test_directory_input_exits_1_with_hint(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(tmp_path)])
+
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert err.startswith(f"エラー: {tmp_path} はディレクトリです")
+        assert "Docker" in err
+
+    def test_utf8_input_exits_1_with_hint(self, tmp_path, capsys):
+        src = tmp_path / "in.txt"
+        src.write_text('0001,000,"ﾃｽﾄ","テスト銀行",1\r\n', encoding="utf-8")
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src)])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == (
+            "エラー: 1 行目: cp932 として読めません (UTF-8 で保存していませんか?)\n"
+        )
+
+    def test_help_mentions_options(self, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--help"])
+
+        assert excinfo.value.code == 0
+        out = capsys.readouterr().out
+        assert "--input" in out
+        assert "--output-dir" in out

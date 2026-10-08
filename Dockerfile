@@ -14,7 +14,8 @@ COPY bank_master_creator.py ./
 
 USER app
 
-CMD ["python", "bank_master_creator.py"]
+# 引数をそのまま渡せるようにします (例: docker compose run --rm app --help)。
+ENTRYPOINT ["python", "bank_master_creator.py"]
 
 FROM runtime AS dev
 
@@ -28,4 +29,5 @@ COPY tests ./tests
 
 USER app
 
+ENTRYPOINT []
 CMD ["sh", "-c", "ruff check . && ruff format --check . && pytest"]
