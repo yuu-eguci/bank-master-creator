@@ -1,3 +1,4 @@
+import io
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ from bank_master_creator import (
     quote,
     read_rows,
     write_sql,
+    write_sql_stream,
 )
 
 NOW = datetime(2026, 1, 2, 3, 4, 5)
@@ -405,6 +407,51 @@ class TestRowsPerInsert:
     def test_rejects_non_positive(self, value):
         with pytest.raises(SystemExit) as excinfo:
             main(["--rows-per-insert", value])
+
+        assert excinfo.value.code == 2
+
+
+class TestStdout:
+    def test_combined_stream(self):
+        out = io.StringIO()
+
+        write_sql_stream([bank_row()], [branch_row()], out)
+
+        assert out.getvalue().splitlines() == [
+            "SET NAMES utf8mb4;",
+            make_bank_insert_sql(bank_row()),
+            make_branch_insert_sql(branch_row()),
+        ]
+
+    def test_delete_before_insert_single_transaction(self):
+        out = io.StringIO()
+
+        write_sql_stream([bank_row()], [], out, delete_before_insert=True)
+
+        assert out.getvalue().splitlines() == [
+            "SET NAMES utf8mb4;",
+            "START TRANSACTION;",
+            "DELETE FROM m_banks;",
+            make_bank_insert_sql(bank_row()),
+            "DELETE FROM m_bank_branches;",
+            "COMMIT;",
+        ]
+
+    def test_main_writes_sql_to_stdout_and_summary_to_stderr(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
+
+        main(["--input", str(src), "--stdout", "--rows-per-insert", "2"])
+
+        captured = capsys.readouterr()
+        assert captured.out.startswith("SET NAMES utf8mb4;\nINSERT INTO m_banks ")
+        assert captured.out.endswith("');\n")
+        assert captured.out.count("INSERT") == 2
+        assert captured.err == "銀行 1 件、支店 2 件\n"
+        assert not (tmp_path / "output").exists()
+
+    def test_rejects_check(self):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--stdout", "--check"])
 
         assert excinfo.value.code == 2
 

@@ -5,13 +5,14 @@
 
 import argparse
 import csv
+import io
 import sys
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, TextIO
 
 # 元データ (既定値)。
 ORIGINAL_DATA = "ginkositen.txt"
@@ -155,16 +156,58 @@ def write_sql(
         (bank_path, BANK_TABLE, [_bank_values(row) for row in banks]),
         (branch_path, BRANCH_TABLE, [_branch_values(row) for row in branches]),
     )
-    for path, (table, columns), values_list in targets:
+    for path, table, values_list in targets:
         with path.open("w", encoding="utf-8", newline="\n") as f:
             f.write(HEADER)
             if delete_before_insert:
-                f.write(f"START TRANSACTION;\nDELETE FROM {table};\n")
-            for sql in make_insert_sqls(table, columns, values_list, rows_per_insert):
-                f.write(sql + "\n")
+                f.write("START TRANSACTION;\n")
+            _write_table(f, table, values_list, delete_before_insert, rows_per_insert)
             if delete_before_insert:
                 f.write("COMMIT;\n")
     return bank_path, branch_path
+
+
+def write_sql_stream(
+    banks: list[list[str]],
+    branches: list[list[str]],
+    out: TextIO,
+    *,
+    delete_before_insert: bool = False,
+    rows_per_insert: int = 1,
+) -> None:
+    """銀行マスタ・支店マスタの SQL を 1 つのストリームにまとめて書きます。
+
+    delete_before_insert が真なら、両テーブルを 1 つのトランザクションで入れ直します。
+    """
+    out.write(HEADER)
+    if delete_before_insert:
+        out.write("START TRANSACTION;\n")
+    _write_table(
+        out, BANK_TABLE, [_bank_values(row) for row in banks], delete_before_insert, rows_per_insert
+    )
+    _write_table(
+        out,
+        BRANCH_TABLE,
+        [_branch_values(row) for row in branches],
+        delete_before_insert,
+        rows_per_insert,
+    )
+    if delete_before_insert:
+        out.write("COMMIT;\n")
+
+
+def _write_table(
+    out: TextIO,
+    table: tuple[str, str],
+    values_list: list[str],
+    delete_before_insert: bool,
+    rows_per_insert: int,
+) -> None:
+    name, columns = table
+    if delete_before_insert:
+        out.write(f"DELETE FROM {name};\n")  # noqa: S608 (name は定数です)
+    for sql in make_insert_sqls(name, columns, values_list, rows_per_insert):
+        out.write(sql + "\n")
 
 
 def create(
@@ -340,6 +383,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="N",
         help="1 つの INSERT 文にまとめる行数 (既定: 1)",
     )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="ファイルを作らず、銀行・支店の SQL をまとめて標準出力に書く (mysql へのパイプ用)",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--delete-before-insert",
@@ -355,7 +403,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="OLD",
         help="ファイルを作らず、OLD から --input への追加・削除・名称変更を表示する",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.stdout and (args.check or args.diff_from):
+        parser.error("--stdout は --check, --diff-from と同時に指定できません。")
+    return args
 
 
 def _fail(message: str) -> NoReturn:
@@ -390,6 +441,19 @@ def main(argv: list[str] | None = None) -> None:
         print("\n".join(report.lines()))
         if report.problems:
             _fail("データに問題があります。")
+        return
+    if args.stdout:
+        if isinstance(sys.stdout, io.TextIOWrapper):
+            # Windows など、標準出力が UTF-8 でない環境のためです。
+            sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+        write_sql_stream(
+            banks,
+            branches,
+            sys.stdout,
+            delete_before_insert=args.delete_before_insert,
+            rows_per_insert=args.rows_per_insert,
+        )
+        print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
         return
     try:
         paths = write_sql(
