@@ -239,7 +239,7 @@ class TestDeleteBeforeInsert:
     def test_bank_file_layout(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
 
-        bank, _ = create(src, tmp_path, now=NOW, delete_before_insert=True)
+        bank, _ = write_sql(*read_rows(src), tmp_path, NOW, delete_before_insert=True)
 
         assert bank.read_text(encoding="utf-8").splitlines() == [
             "SET NAMES utf8mb4;",
@@ -252,7 +252,7 @@ class TestDeleteBeforeInsert:
     def test_branch_file_deletes_branch_table_only(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
 
-        _, branch = create(src, tmp_path, now=NOW, delete_before_insert=True)
+        _, branch = write_sql(*read_rows(src), tmp_path, NOW, delete_before_insert=True)
 
         text = branch.read_text(encoding="utf-8")
         assert "DELETE FROM m_bank_branches;\n" in text
@@ -261,7 +261,7 @@ class TestDeleteBeforeInsert:
     def test_no_rows_still_clears_table(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK])
 
-        _, branch = create(src, tmp_path, now=NOW, delete_before_insert=True)
+        _, branch = write_sql(*read_rows(src), tmp_path, NOW, delete_before_insert=True)
 
         assert branch.read_text(encoding="utf-8").splitlines() == [
             "SET NAMES utf8mb4;",
@@ -273,7 +273,7 @@ class TestDeleteBeforeInsert:
     def test_lf_and_utf8(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
 
-        for path in create(src, tmp_path, now=NOW, delete_before_insert=True):
+        for path in write_sql(*read_rows(src), tmp_path, NOW, delete_before_insert=True):
             data = path.read_bytes()
             assert b"\r" not in data
             assert data.endswith(b"COMMIT;\n")
@@ -460,7 +460,7 @@ class TestNoTimestamp:
     def test_fixed_names(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
 
-        bank, branch = create(src, tmp_path, timestamp=False)
+        bank, branch = write_sql(*read_rows(src), tmp_path, timestamp=False)
 
         assert bank == tmp_path / "銀行マスタINSERT.sql"
         assert branch == tmp_path / "支店マスタINSERT.sql"

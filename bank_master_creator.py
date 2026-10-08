@@ -132,6 +132,27 @@ def read_rows(input_path: Path) -> tuple[list[list[str]], list[list[str]]]:
     return banks, branches
 
 
+Table = tuple[str, str]  # (テーブル名, カラム並び)
+
+
+def _write_tables(
+    out: TextIO,
+    tables: list[tuple[Table, list[str]]],
+    delete_before_insert: bool,
+    rows_per_insert: int,
+) -> None:
+    out.write(HEADER)
+    if delete_before_insert:
+        out.write("START TRANSACTION;\n")
+    for (name, columns), values_list in tables:
+        if delete_before_insert:
+            out.write(f"DELETE FROM {name};\n")  # noqa: S608 (name は定数です)
+        for sql in make_insert_sqls(name, columns, values_list, rows_per_insert):
+            out.write(sql + "\n")
+    if delete_before_insert:
+        out.write("COMMIT;\n")
+
+
 def write_sql(
     banks: list[list[str]],
     branches: list[list[str]],
@@ -158,12 +179,7 @@ def write_sql(
     )
     for path, table, values_list in targets:
         with path.open("w", encoding="utf-8", newline="\n") as f:
-            f.write(HEADER)
-            if delete_before_insert:
-                f.write("START TRANSACTION;\n")
-            _write_table(f, table, values_list, delete_before_insert, rows_per_insert)
-            if delete_before_insert:
-                f.write("COMMIT;\n")
+            _write_tables(f, [(table, values_list)], delete_before_insert, rows_per_insert)
     return bank_path, branch_path
 
 
@@ -179,58 +195,21 @@ def write_sql_stream(
 
     delete_before_insert が真なら、両テーブルを 1 つのトランザクションで入れ直します。
     """
-    out.write(HEADER)
-    if delete_before_insert:
-        out.write("START TRANSACTION;\n")
-    _write_table(
-        out, BANK_TABLE, [_bank_values(row) for row in banks], delete_before_insert, rows_per_insert
-    )
-    _write_table(
-        out,
-        BRANCH_TABLE,
-        [_branch_values(row) for row in branches],
-        delete_before_insert,
-        rows_per_insert,
-    )
-    if delete_before_insert:
-        out.write("COMMIT;\n")
+    tables = [
+        (BANK_TABLE, [_bank_values(row) for row in banks]),
+        (BRANCH_TABLE, [_branch_values(row) for row in branches]),
+    ]
+    _write_tables(out, tables, delete_before_insert, rows_per_insert)
 
 
-def _write_table(
-    out: TextIO,
-    table: tuple[str, str],
-    values_list: list[str],
-    delete_before_insert: bool,
-    rows_per_insert: int,
-) -> None:
-    name, columns = table
-    if delete_before_insert:
-        out.write(f"DELETE FROM {name};\n")  # noqa: S608 (name は定数です)
-    for sql in make_insert_sqls(name, columns, values_list, rows_per_insert):
-        out.write(sql + "\n")
-
-
-def create(
-    input_path: Path,
-    output_dir: Path,
-    now: datetime | None = None,
-    *,
-    delete_before_insert: bool = False,
-    timestamp: bool = True,
-) -> tuple[Path, Path]:
+def create(input_path: Path, output_dir: Path, now: datetime | None = None) -> tuple[Path, Path]:
     """input_path を読み、output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出します。
 
     不正な行があれば ValueError を送出します。その場合ファイルは作りません。
+    オプションを使う場合は read_rows() と write_sql() を組み合わせてください。
     """
     banks, branches = read_rows(input_path)
-    return write_sql(
-        banks,
-        branches,
-        output_dir,
-        now,
-        delete_before_insert=delete_before_insert,
-        timestamp=timestamp,
-    )
+    return write_sql(banks, branches, output_dir, now)
 
 
 # 元データのｶﾅは 15 文字で切られているため、15 文字ちょうどなら切り詰めの可能性があります。
@@ -453,7 +432,7 @@ def main(argv: list[str] | None = None) -> None:
             delete_before_insert=args.delete_before_insert,
             rows_per_insert=args.rows_per_insert,
         )
-        print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
+        _print_summary(banks, branches)
         return
     try:
         paths = write_sql(
@@ -468,6 +447,10 @@ def main(argv: list[str] | None = None) -> None:
         _fail(f"{args.output_dir} に書き出せません ({e.strerror})。")
     for path in paths:
         print(path)
+    _print_summary(banks, branches)
+
+
+def _print_summary(banks: list[list[str]], branches: list[list[str]]) -> None:
     print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
 
 
