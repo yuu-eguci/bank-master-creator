@@ -1,8 +1,10 @@
 import io
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -13,6 +15,7 @@ from bank_master_creator import (
     create,
     diff_rows,
     escape,
+    filter_rows,
     main,
     make_bank_insert_sql,
     make_branch_insert_sql,
@@ -30,7 +33,7 @@ BANK = ("0001", "000", "ﾃｽﾄ", "テスト銀行", "1")
 BRANCH = ("0001", "001", "ﾃｽﾄｼﾃﾝ", "テスト支店", "2")
 
 
-def write_input(path: Path, lines: list[tuple[str, ...] | str]) -> Path:
+def write_input(path: Path, lines: Sequence[tuple[str, ...] | str]) -> Path:
     """合成データを ginkositen.txt と同じ形式で書き出します。
 
     cp932, CRLF で、ｶﾅは 15 桁に埋め、ｶﾅと名前は引用符で囲みます。
@@ -484,6 +487,123 @@ class TestStdout:
         assert proc.returncode == 1
         assert b"Traceback" not in stderr
         assert "標準出力に書き出せません".encode() in stderr
+
+
+class TestBankCode:
+    ROWS: ClassVar = [
+        BANK,
+        BRANCH,
+        ("0001", "002", "ﾆ", "二", "2"),
+        ("0002", "000", "ｲ", "イ銀行", "1"),
+        ("0002", "001", "ｲｼﾃﾝ", "イ支店", "2"),
+    ]
+
+    def test_filters_banks_and_their_branches(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--bank-code", "0002", "--stdout"])
+
+        captured = capsys.readouterr()
+        inserts = [line for line in captured.out.splitlines() if line.startswith("INSERT")]
+        assert len(inserts) == 2
+        assert "('0002', 'イ銀行', 'ｲ')" in inserts[0]
+        assert "('0002', '001', 'イ支店', 'ｲｼﾃﾝ')" in inserts[1]
+        assert captured.err == "銀行 1 件、支店 1 件 (--bank-code で絞り込み)\n"
+
+    def test_comma_list_equals_repeated_flag_and_keeps_input_order(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--bank-code", "0002,0001", "--stdout"])
+        first = capsys.readouterr().out
+        main(["--input", str(src), "--bank-code", "0002", "--bank-code", "0001", "--stdout"])
+        second = capsys.readouterr().out
+
+        assert first == second
+        assert first.index("'0001', 'テスト銀行'") < first.index("'0002', 'イ銀行'")
+
+    def test_unknown_code_exits_1_and_writes_nothing(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+        out = tmp_path / "out"
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--bank-code", "0009", "--output-dir", str(out)])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 銀行コード 0009 は入力にありません。\n"
+        assert not out.exists()
+
+    @pytest.mark.parametrize("value", ["1", "00011", "00a1", "", "0001,"])
+    def test_rejects_malformed_code(self, value):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--bank-code", value])
+
+        assert excinfo.value.code == 2
+
+    def test_seed_combo(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main([
+            "--input", str(src), "--bank-code", "0001", "--stdout",
+            "--delete-before-insert", "--rows-per-insert", "500",
+        ])  # fmt: skip
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[:3] == ["SET NAMES utf8mb4;", "START TRANSACTION;", "DELETE FROM m_banks;"]
+        assert lines[3].startswith("INSERT INTO m_banks ")
+        assert lines[4] == "DELETE FROM m_bank_branches;"
+        assert lines[5].endswith(" VALUES")
+        assert lines[6:] == [
+            "('0001', '001', 'テスト支店', 'ﾃｽﾄｼﾃﾝ'),",
+            "('0001', '002', '二', 'ﾆ');",
+            "COMMIT;",
+        ]
+
+    def test_filter_applies_to_check(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [*self.ROWS, ("0002", "001", "ｲｼﾃﾝ", "イ支店", "2")])
+
+        main(["--input", str(src), "--check", "--bank-code", "0001"])
+
+        assert capsys.readouterr().out.startswith("銀行: 1 件、支店: 2 件\n")
+
+    def test_filter_applies_to_diff_from(self, tmp_path, capsys):
+        old = write_input(tmp_path / "old.txt", self.ROWS)
+        new = write_input(
+            tmp_path / "new.txt", [*self.ROWS[:3], ("0003", "000", "ｳ", "ウ銀行", "1")]
+        )
+
+        main(["--input", str(new), "--diff-from", str(old), "--bank-code", "0001"])
+
+        out = capsys.readouterr().out
+        assert "銀行: 追加 0 件、削除 0 件、名称変更 0 件\n" in out
+        assert "支店: 追加 0 件、削除 0 件、名称変更 0 件\n" in out
+
+    def test_file_mode_writes_filtered_files(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(
+            [
+                "--input",
+                str(src),
+                "--output-dir",
+                str(tmp_path),
+                "--no-timestamp",
+                "--bank-code",
+                "0001",
+            ]
+        )
+
+        bank = (tmp_path / "銀行マスタINSERT.sql").read_text(encoding="utf-8")
+        branch = (tmp_path / "支店マスタINSERT.sql").read_text(encoding="utf-8")
+        assert bank.count("INSERT") == 1
+        assert branch.count("INSERT") == 2
+
+    def test_filter_rows_function(self):
+        banks = [bank_row(), ["0002", "000", "ｲ".ljust(15), "イ銀行", "1"]]
+        branches = [branch_row(), ["0002", "001", "ｲ".ljust(15), "イ支店", "2"]]
+
+        assert filter_rows(banks, branches, ["0002"]) == ([banks[1]], [branches[1]])
+        with pytest.raises(ValueError, match="0009"):
+            filter_rows(banks, branches, ["0009"])
 
 
 class TestNoTimestamp:

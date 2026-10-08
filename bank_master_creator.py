@@ -342,6 +342,32 @@ def diff_lines(banks: Diff, branches: Diff) -> list[str]:
     return lines
 
 
+def filter_rows(
+    banks: list[list[str]], branches: list[list[str]], codes: list[str], *, strict: bool = True
+) -> tuple[list[list[str]], list[list[str]]]:
+    """指定した銀行コードの銀行行と支店行だけを入力順のまま返します。
+
+    strict が真のとき、入力にないコードがあれば ValueError を送出します。
+    """
+    wanted = set(codes)
+    missing = wanted - {row[BANK_CODE] for row in banks}
+    if missing and strict:
+        raise ValueError(f"銀行コード {', '.join(sorted(missing))} は入力にありません。")
+    return (
+        [row for row in banks if row[BANK_CODE] in wanted],
+        [row for row in branches if row[BANK_CODE] in wanted],
+    )
+
+
+def _bank_codes(text: str) -> list[str]:
+    codes = text.split(",")
+    if not all(len(code) == 4 and code.isascii() and code.isdigit() for code in codes):
+        raise argparse.ArgumentTypeError(
+            f"{text!r} は不正です。4 桁の銀行コードをカンマ区切りで指定してください。"
+        )
+    return codes
+
+
 def _positive_int(text: str) -> int:
     try:
         value = int(text)
@@ -366,6 +392,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output"),
         help="出力先ディレクトリ (既定: %(default)s)",
+    )
+    parser.add_argument(
+        "--bank-code",
+        type=_bank_codes,
+        action="extend",
+        default=[],
+        metavar="CODES",
+        help="指定した銀行 (4 桁、カンマ区切り) とその支店だけを対象にする",
     )
     parser.add_argument(
         "--no-timestamp",
@@ -439,13 +473,27 @@ def _read_or_fail(path: Path) -> tuple[list[list[str]], list[list[str]]]:
         _fail(str(e))
 
 
-def _print_summary(banks: list[list[str]], branches: list[list[str]]) -> None:
+def _print_summary(banks: list[list[str]], branches: list[list[str]], filtered: bool) -> None:
     _flush_stdout()
-    print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
+    note = " (--bank-code で絞り込み)" if filtered else ""
+    print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件{note}", file=sys.stderr)
+
+
+def _read_and_filter(
+    path: Path, codes: list[str], *, strict: bool
+) -> tuple[list[list[str]], list[list[str]]]:
+    # strict が偽なら、指定したコードが path になくてもエラーにしません (--diff-from の OLD 用)。
+    banks, branches = _read_or_fail(path)
+    if not codes:
+        return banks, branches
+    try:
+        return filter_rows(banks, branches, codes, strict=strict)
+    except ValueError as e:
+        _fail(str(e))
 
 
 def _run(args: argparse.Namespace) -> None:
-    banks, branches = _read_or_fail(args.input)
+    banks, branches = _read_and_filter(args.input, args.bank_code, strict=True)
     if args.check:
         report = check(banks, branches)
         print("\n".join(report.lines()))
@@ -456,7 +504,7 @@ def _run(args: argparse.Namespace) -> None:
         # --delete-before-insert で空のデータを流すとテーブルが空になるため、ここで止めます。
         _fail("入力に行がありません。")
     if args.diff_from:
-        old_banks, old_branches = _read_or_fail(args.diff_from)
+        old_banks, old_branches = _read_and_filter(args.diff_from, args.bank_code, strict=False)
         print(f"{args.diff_from} → {args.input}")
         print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
         return
@@ -473,7 +521,7 @@ def _run(args: argparse.Namespace) -> None:
             delete_before_insert=args.delete_before_insert,
             rows_per_insert=args.rows_per_insert,
         )
-        _print_summary(banks, branches)
+        _print_summary(banks, branches, bool(args.bank_code))
         return
     try:
         paths = write_sql(
@@ -490,7 +538,7 @@ def _run(args: argparse.Namespace) -> None:
         _fail(f"{args.output_dir} に書き出せません ({e.strerror})。")
     for path in paths:
         print(path)
-    _print_summary(banks, branches)
+    _print_summary(banks, branches, bool(args.bank_code))
 
 
 def main(argv: list[str] | None = None) -> None:

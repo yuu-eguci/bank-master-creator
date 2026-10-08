@@ -53,6 +53,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 | --- | --- |
 | `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。 |
 | `--output-dir PATH` | 出力先ディレクトリです (既定: `output/`)。 |
+| `--bank-code CODES` | 指定した銀行 (4 桁のコード。カンマ区切りか複数回指定) とその支店だけを対象にします。開発用 DB に少量のデータを入れるときに使い、`--check` や `--diff-from` にも効きます。入力にないコードを指定するとエラーです。例: `--bank-code 0001,0005 --stdout --delete-before-insert` |
 | `--no-timestamp` | ファイル名を `銀行マスタINSERT.sql`・`支店マスタINSERT.sql` に固定します。スクリプトから扱いやすく、前回の出力と diff しやすくなります。 |
 | `--rows-per-insert N` | 1 つの INSERT 文に N 行をまとめます (既定: 1)。`VALUES` の各行は改行で区切ります。手元の MySQL 8.4 では支店 31048 件の読み込みが、既定で約 24 秒、`--delete-before-insert` (トランザクション) で約 1.6 秒、`--rows-per-insert 500` で約 0.3 秒でした。 |
 | `--stdout` | ファイルを作らず、銀行マスタ・支店マスタの SQL を 1 つにまとめて標準出力に書きます (`SET NAMES` は先頭に 1 回、`--delete-before-insert` では両テーブルを 1 つのトランザクションで入れ直します)。mysql へ直接流し込むときに使います (下の例を参照)。 |
