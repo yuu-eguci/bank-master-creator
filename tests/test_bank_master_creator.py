@@ -22,6 +22,7 @@ from bank_master_creator import (
     make_branch_insert_sql,
     quote,
     read_rows,
+    search_banks,
     write_sql,
     write_sql_stream,
 )
@@ -684,6 +685,108 @@ class TestStdin:
 
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.decode("utf-8").startswith("銀行: 1 件、支店: 1 件\n")
+
+
+class TestLookup:
+    ROWS: ClassVar = [
+        ("0001", "000", "ﾐｽﾞﾎ", "みずほ", "1"),
+        ("0005", "000", "ﾐﾂﾋﾞｼﾕ-ｴﾌｼﾞｴｲ", "三菱ＵＦＪ", "1"),
+        ("0001", "001", "ﾄｳｷﾖｳ", "東京営業部", "2"),
+        ("0001", "002", "ｼﾌﾞﾔ", "渋谷", "2"),
+        ("0005", "001", "ﾎﾝﾃﾝ", "本店", "2"),
+    ]
+
+    def test_search_prints_tsv(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--search", "みずほ", "--output-dir", str(tmp_path / "out")])
+
+        captured = capsys.readouterr()
+        assert captured.out == "0001\t000\tみずほ\tﾐｽﾞﾎ\n"
+        assert captured.err == "1 件\n"
+        assert not (tmp_path / "out").exists()
+
+    @pytest.mark.parametrize(
+        ("query", "code"),
+        [("ﾐｽﾞﾎ", "0001"), ("ミズホ", "0001"), ("UFJ", "0005"), ("ufj", "0005"), ("ＵＦＪ", "0005")],  # noqa: RUF001
+    )
+    def test_search_ignores_width_and_case(self, tmp_path, capsys, query, code):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--search", query])
+
+        assert capsys.readouterr().out.startswith(f"{code}\t000\t")
+
+    def test_search_no_hit_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--search", "ない"])
+
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == "エラー: 該当する銀行がありません。\n"
+
+    def test_list_prints_bank_then_branches(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--list", "0001"])
+
+        captured = capsys.readouterr()
+        assert captured.out == (
+            "0001\t000\tみずほ\tﾐｽﾞﾎ\n0001\t001\t東京営業部\tﾄｳｷﾖｳ\n0001\t002\t渋谷\tｼﾌﾞﾔ\n"
+        )
+        assert captured.err == "支店 2 件\n"
+
+    def test_list_unknown_code_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--list", "0009"])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 銀行コード 0009 は入力にありません。\n"
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--list", "0001", "--stdout"],
+            ["--search", "x", "--check"],
+            ["--search", "x", "--list", "0001"],
+            ["--list", "0001", "--delete-before-insert"],
+        ],
+    )
+    def test_exclusive_with_other_modes(self, argv):
+        with pytest.raises(SystemExit) as excinfo:
+            main(argv)
+
+        assert excinfo.value.code == 2
+
+    def test_search_banks_function(self):
+        banks = [bank_row(), ["0005", "000", "ﾐﾂﾋﾞｼﾕ-ｴﾌｼﾞｴｲ".ljust(15), "三菱ＵＦＪ", "1"]]
+
+        assert search_banks(banks, "ufj") == [banks[1]]
+        assert search_banks(banks, "テスト") == [banks[0]]
+        assert search_banks(banks, "") == banks
+
+    @pytest.mark.parametrize(
+        "code", ["", "001", "00001", "0001,0005", "abcd", "\uff10\uff10\uff10\uff11"]
+    )
+    def test_list_rejects_invalid_code(self, code):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--list", code])
+
+        assert excinfo.value.code == 2
+
+    def test_lookup_respects_bank_filter(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.ROWS)
+
+        main(["--input", str(src), "--search", "", "--bank-code", "0005"])
+
+        captured = capsys.readouterr()
+        assert captured.out == "0005\t000\t三菱ＵＦＪ\tﾐﾂﾋﾞｼﾕ-ｴﾌｼﾞｴｲ\n"  # noqa: RUF001
+        assert captured.err == "1 件\n"
 
 
 class TestNoTimestamp:

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import NoReturn, TextIO
+from unicodedata import normalize
 
 if sys.version_info < (3, 11):  # noqa: UP036 (古い Python でのガードです)
     # ここより下の型注釈 (X | None など) は古い Python では読み込み時に失敗するため、先に止めます。
@@ -380,6 +381,24 @@ def filter_rows(
     )
 
 
+def search_banks(banks: list[list[str]], query: str) -> list[list[str]]:
+    """全角・半角と大文字・小文字を区別せず銀行名とカナを検索します。"""
+    needle = normalize("NFKC", query).casefold()
+    return [
+        row
+        for row in banks
+        if any(needle in normalize("NFKC", value).casefold() for value in (row[NAME], _kana(row)))
+    ]
+
+
+def _bank_code(text: str) -> str:
+    if len(text) != 4 or not text.isascii() or not text.isdigit():
+        raise argparse.ArgumentTypeError(
+            f"{text!r} は不正です。4 桁の銀行コードを指定してください。"
+        )
+    return text
+
+
 def _bank_codes(text: str) -> list[str]:
     codes = text.split(",")
     if not all(len(code) == 4 and code.isascii() and code.isdigit() for code in codes):
@@ -457,14 +476,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="OLD",
         help="ファイルを作らず、OLD から --input への追加・削除・名称変更を表示する",
     )
+    mode.add_argument("--search", metavar="TEXT", help="銀行名またはカナを検索して TSV で表示する")
+    mode.add_argument(
+        "--list", type=_bank_code, metavar="CODE", help="銀行とその支店を TSV で表示する"
+    )
     return parser
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.stdout and (args.check or args.diff_from):
-        parser.error("--stdout は --check, --diff-from と同時に指定できません。")
+    if args.stdout and (args.check or args.diff_from or args.search is not None or args.list):
+        parser.error("--stdout は --check, --diff-from, --search, --list と同時に指定できません。")
     if args.input == STDIN and args.diff_from == STDIN:
         parser.error("--input と --diff-from の両方を標準入力にはできません。")
     return args
@@ -518,6 +541,30 @@ def _read_and_filter(
         _fail(str(e))
 
 
+def _print_lookup(rows: list[list[str]], summary: str) -> None:
+    for row in rows:
+        print("\t".join((row[BANK_CODE], row[BRANCH_CODE], row[NAME], _kana(row))))
+    _flush_stdout()
+    print(summary, file=sys.stderr)
+
+
+def _run_lookup(
+    args: argparse.Namespace, banks: list[list[str]], branches: list[list[str]]
+) -> None:
+    if args.search is not None:
+        matches = search_banks(banks, args.search)
+        if not matches:
+            _fail("該当する銀行がありません。")
+        _print_lookup(matches, f"{len(matches)} 件")
+        return
+    if args.list:
+        try:
+            selected_banks, selected_branches = filter_rows(banks, branches, [args.list])
+        except ValueError as e:
+            _fail(str(e))
+        _print_lookup(selected_banks + selected_branches, f"支店 {len(selected_branches)} 件")
+
+
 def _run(args: argparse.Namespace) -> None:
     banks, branches = _read_and_filter(args.input, args.bank_code, strict=True)
     if args.check:
@@ -529,6 +576,9 @@ def _run(args: argparse.Namespace) -> None:
     if not banks and not branches:
         # --delete-before-insert で空のデータを流すとテーブルが空になるため、ここで止めます。
         _fail("入力に行がありません。")
+    if args.search is not None or args.list:
+        _run_lookup(args, banks, branches)
+        return
     if args.diff_from:
         old_banks, old_branches = _read_and_filter(args.diff_from, args.bank_code, strict=False)
         print(f"{_display(args.diff_from)} → {_display(args.input)}")
