@@ -235,6 +235,60 @@ def check(banks: list[list[str]], branches: list[list[str]]) -> Report:
     )
 
 
+@dataclass
+class Diff:
+    """--diff-from の比較結果です。"""
+
+    added: list[list[str]]
+    removed: list[list[str]]
+    changed: list[tuple[list[str], list[str]]]
+
+
+def _row_key(row: list[str]) -> tuple[str, str]:
+    return row[BANK_CODE], row[BRANCH_CODE]
+
+
+def _row_value(row: list[str]) -> tuple[str, str]:
+    return row[NAME], row[NAME_KANA].rstrip(" ")
+
+
+def diff_rows(old: list[list[str]], new: list[list[str]]) -> Diff:
+    """銀行コード・支店コードをキーに、old から new への追加・削除・名称変更を求めます。"""
+    old_by_key = {_row_key(row): row for row in old}
+    new_by_key = {_row_key(row): row for row in new}
+    return Diff(
+        added=[row for key, row in new_by_key.items() if key not in old_by_key],
+        removed=[row for key, row in old_by_key.items() if key not in new_by_key],
+        changed=[
+            (row, new_by_key[key])
+            for key, row in old_by_key.items()
+            if key in new_by_key and _row_value(row) != _row_value(new_by_key[key])
+        ],
+    )
+
+
+def _code(row: list[str]) -> str:
+    return row[BANK_CODE] if row[ROW_FLAG] == ROW_BANK else f"{row[BANK_CODE]}-{row[BRANCH_CODE]}"
+
+
+def _name(row: list[str]) -> str:
+    name, kana = _row_value(row)
+    return f"{name} ({kana})"
+
+
+def diff_lines(banks: Diff, branches: Diff) -> list[str]:
+    """--diff-from の表示行を作ります。"""
+    lines = [
+        f"{label}: 追加 {len(d.added)} 件、削除 {len(d.removed)} 件、名称変更 {len(d.changed)} 件"
+        for label, d in (("銀行", banks), ("支店", branches))
+    ]
+    for label, d in (("銀行", banks), ("支店", branches)):
+        lines += [f"+ {label} {_code(row)} {_name(row)}" for row in d.added]
+        lines += [f"- {label} {_code(row)} {_name(row)}" for row in d.removed]
+        lines += [f"~ {label} {_code(old)} {_name(old)} → {_name(new)}" for old, new in d.changed]
+    return lines
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -244,22 +298,26 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--output-dir", type=Path, default=Path("output"), help="出力先ディレクトリ"
     )
     parser.add_argument(
-        "--delete-before-insert",
-        action="store_true",
-        help="トランザクション内でテーブルを空にしてから INSERT する (入れ直し用)",
-    )
-    parser.add_argument(
         "--no-timestamp",
         action="store_true",
         help="ファイル名の先頭に日時を付けない (銀行マスタINSERT.sql, 支店マスタINSERT.sql)",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--delete-before-insert",
+        action="store_true",
+        help="トランザクション内でテーブルを空にしてから INSERT する (入れ直し用)",
+    )
+    mode.add_argument(
         "--check", action="store_true", help="ファイルを作らず、件数と検査結果だけを表示する"
     )
-    args = parser.parse_args(argv)
-    if args.check and args.delete_before_insert:
-        parser.error("--check と --delete-before-insert は同時に指定できません。")
-    return args
+    mode.add_argument(
+        "--diff-from",
+        type=Path,
+        metavar="OLD",
+        help="ファイルを作らず、OLD から --input への追加・削除・名称変更を表示する",
+    )
+    return parser.parse_args(argv)
 
 
 def _fail(message: str) -> NoReturn:
@@ -267,20 +325,28 @@ def _fail(message: str) -> NoReturn:
     sys.exit(1)
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = _parse_args(argv)
+def _read_or_fail(path: Path) -> tuple[list[list[str]], list[list[str]]]:
     try:
-        banks, branches = read_rows(args.input)
+        return read_rows(path)
     except FileNotFoundError:
-        _fail(f"{args.input} が見つかりません。")
+        _fail(f"{path} が見つかりません。")
     except IsADirectoryError:
         _fail(
-            f"{args.input} はディレクトリです。"
+            f"{path} はディレクトリです。"
             "(Docker で入力ファイルがないまま実行すると空のディレクトリができます。"
             "削除してから入力ファイルを置いてください。)"
         )
     except ValueError as e:
         _fail(str(e))
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    banks, branches = _read_or_fail(args.input)
+    if args.diff_from:
+        old_banks, old_branches = _read_or_fail(args.diff_from)
+        print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
+        return
     if args.check:
         report = check(banks, branches)
         print("\n".join(report.lines()))

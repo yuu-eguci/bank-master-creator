@@ -7,6 +7,7 @@ import bank_master_creator
 from bank_master_creator import (
     check,
     create,
+    diff_rows,
     escape,
     main,
     make_bank_insert_sql,
@@ -380,6 +381,64 @@ class TestNoTimestamp:
             "銀行マスタINSERT.sql",
         ]
         assert str(out / "銀行マスタINSERT.sql") in capsys.readouterr().out
+
+
+class TestDiff:
+    def test_diff_rows(self):
+        old = [bank_row(), branch_row(), ["0001", "002", "ｷｴﾙ".ljust(15), "消える", "2"]]
+        new = [
+            bank_row(name="新テスト銀行"),
+            branch_row(kana="ﾃｽﾄｼﾃﾝ"),
+            ["0001", "003", "ﾌｴﾙ".ljust(15), "増える", "2"],
+        ]
+
+        result = diff_rows(old, new)
+
+        assert result.added == [new[2]]
+        assert result.removed == [old[2]]
+        assert result.changed == [(old[0], new[0])]
+
+    def test_main_report(self, tmp_path, capsys):
+        old = write_input(
+            tmp_path / "old.txt",
+            [("0001", "000", "ｱ", "ア銀行", "1"), ("0002", "000", "ｲ", "イ銀行", "1"), BRANCH],
+        )
+        new = write_input(
+            tmp_path / "new.txt",
+            [
+                ("0001", "000", "ｱ", "ア銀行", "1"),
+                ("0003", "000", "ｳ", "ウ銀行", "1"),
+                ("0001", "001", "ﾃｽﾄｼﾃﾝ", "テスト本店", "2"),
+                ("0003", "001", "ｳ", "ウ支店", "2"),
+            ],
+        )
+
+        main(["--input", str(new), "--diff-from", str(old)])
+
+        assert capsys.readouterr().out == (
+            "銀行: 追加 1 件、削除 1 件、名称変更 0 件\n"
+            "支店: 追加 1 件、削除 0 件、名称変更 1 件\n"
+            "+ 銀行 0003 ウ銀行 (ｳ)\n"
+            "- 銀行 0002 イ銀行 (ｲ)\n"
+            "+ 支店 0003-001 ウ支店 (ｳ)\n"
+            "~ 支店 0001-001 テスト支店 (ﾃｽﾄｼﾃﾝ) → テスト本店 (ﾃｽﾄｼﾃﾝ)\n"
+        )
+        assert not (tmp_path / "output").exists()
+
+    def test_missing_old_file_exits_1(self, tmp_path, capsys):
+        new = write_input(tmp_path / "new.txt", [BANK, BRANCH])
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(new), "--diff-from", str(tmp_path / "old.txt")])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == f"エラー: {tmp_path / 'old.txt'} が見つかりません。\n"
+
+    def test_rejects_check(self, tmp_path):
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--check", "--diff-from", str(tmp_path)])
+
+        assert excinfo.value.code == 2
 
 
 class TestReadRows:
