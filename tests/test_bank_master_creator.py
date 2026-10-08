@@ -117,10 +117,18 @@ class TestCreate:
         assert bank == out / BANK_SQL
         assert branch == out / BRANCH_SQL
         assert bank.read_text(encoding="utf-8").splitlines() == [
+            "SET NAMES utf8mb4;",
             "INSERT INTO m_banks (bank_code, bank_name, bank_name_kana)"
             " VALUES ('0001', 'テスト銀行', 'ﾃｽﾄ');",
         ]
-        assert len(branch.read_text(encoding="utf-8").splitlines()) == 2
+        assert len(branch.read_text(encoding="utf-8").splitlines()) == 3
+
+    def test_header_only_when_no_rows(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK])
+
+        _, branch = create(src, tmp_path, now=NOW)
+
+        assert branch.read_text(encoding="utf-8") == "SET NAMES utf8mb4;\n"
 
     def test_comma_in_quoted_name(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [("0001", "000", "ﾃｽﾄ", "テスト,銀行", "1")])
@@ -160,7 +168,9 @@ class TestCreate:
 
         bank, _ = create(src, tmp_path, now=NOW)
 
-        assert bank.read_text(encoding="utf-8") == make_bank_insert_sql(list(BANK)) + "\n"
+        assert bank.read_text(encoding="utf-8") == (
+            "SET NAMES utf8mb4;\n" + make_bank_insert_sql(list(BANK)) + "\n"
+        )
 
     def test_creates_nested_output_dir(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
@@ -175,8 +185,8 @@ class TestCreate:
 
         bank, branch = create(src, tmp_path, now=NOW)
 
-        assert len(bank.read_text(encoding="utf-8").splitlines()) == 1
-        assert len(branch.read_text(encoding="utf-8").splitlines()) == 1
+        assert len(bank.read_text(encoding="utf-8").splitlines()) == 2
+        assert len(branch.read_text(encoding="utf-8").splitlines()) == 2
 
     def test_rejects_unknown_flag(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, (*BRANCH[:4], "3")])

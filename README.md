@@ -19,7 +19,7 @@ docker compose run --rm --build app
 - `(YYYYmmdd_HHMMSS)銀行マスタINSERT.sql`: `m_banks` への INSERT 文です。
 - `(YYYYmmdd_HHMMSS)支店マスタINSERT.sql`: `m_bank_branches` への INSERT 文です。
 
-文字コードは UTF-8 で、1 行に 1 つの INSERT 文を出力します。同名ファイルがあれば上書きします。Docker 実行時、ファイル名の日時は日本時間です (環境変数 `TZ` で変更できます)。
+文字コードは UTF-8 です。先頭行は `SET NAMES utf8mb4;` で、以降は 1 行に 1 つの INSERT 文です。同名ファイルがあれば上書きします。Docker 実行時、ファイル名の日時は日本時間です (環境変数 `TZ` で変更できます)。
 
 ## Usage
 
@@ -54,8 +54,8 @@ CREATE TABLE `m_bank_branches` (
   `bank_branch_id` int(11) NOT NULL AUTO_INCREMENT COMMENT '支店マスタ、bank_branchesのpk。ただし銀行マスタとつなげるときはbank_codeを使う。',
   `bank_code` varchar(45) DEFAULT NULL COMMENT '銀行コード。銀行マスタとつなげるときはこれを使う。',
   `branch_code` varchar(45) DEFAULT NULL COMMENT '支店コード。',
-  `branch_name` varchar(100) DEFAULT NULL COMMENT '銀行名。',
-  `branch_name_kana` varchar(100) DEFAULT NULL COMMENT '銀行名ｶﾅ',
+  `branch_name` varchar(100) DEFAULT NULL COMMENT '支店名。',
+  `branch_name_kana` varchar(100) DEFAULT NULL COMMENT '支店名ｶﾅ',
   `create_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'INSERT日',
   `create_by` int(11) DEFAULT NULL COMMENT 'INSERT者',
   `update_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UPDATE日',

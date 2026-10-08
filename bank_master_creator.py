@@ -21,6 +21,9 @@ COLUMNS = 5
 ROW_BANK = "1"
 ROW_BRANCH = "2"
 
+# 出力ファイルの先頭行です。
+HEADER = "SET NAMES utf8mb4;\n"
+
 # mysql_real_escape_string に倣ってエスケープします (`"` は対象外です)。
 _ESCAPE_TABLE = str.maketrans(
     {
@@ -101,6 +104,7 @@ def create(input_path: Path, output_dir: Path, now: datetime | None = None) -> t
     branch_path = output_dir / f"{prefix}支店マスタINSERT.sql"
     for path, lines in ((bank_path, bank_lines), (branch_path, branch_lines)):
         with path.open("w", encoding="utf-8", newline="\n") as f:
+            f.write(HEADER)
             f.writelines(lines)
     return bank_path, branch_path
 
