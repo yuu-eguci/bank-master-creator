@@ -9,3 +9,4 @@ __pycache__/
 
 # これは最後に書かないとダメ。
 !.gitkeep
+!tests/fixtures/*.sql

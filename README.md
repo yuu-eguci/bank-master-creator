@@ -25,7 +25,7 @@ docker compose run --rm --build app
 
 - データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。
 - Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
-- テストと lint: `docker compose run --rm --build test`
+- テストと lint と型チェック (mypy): `docker compose run --rm --build test`
 - Docker なし (Python 3.14): `python bank_master_creator.py`
 - 入力・出力先の変更: `--input PATH` と `--output-dir PATH` で指定します (既定は `ginkositen.txt` と `output/`)。Docker では `docker compose run --rm app --help` のように引数をそのまま渡せます。
 - 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。

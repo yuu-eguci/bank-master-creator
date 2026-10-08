@@ -30,13 +30,14 @@ def write_input(path: Path, lines: list[tuple[str, ...] | str]) -> Path:
     """
     text = ""
     for line in lines:
-        if isinstance(line, tuple):
-            fields = list(line)
-            if len(fields) == 5:
-                fields[2] = f'"{fields[2].ljust(15)}"'
-                fields[3] = f'"{fields[3]}"'
-            line = ",".join(fields)
-        text += line + "\r\n"
+        if isinstance(line, str):
+            text += line + "\r\n"
+            continue
+        fields = list(line)
+        if len(fields) == 5:
+            fields[2] = f'"{fields[2].ljust(15)}"'
+            fields[3] = f'"{fields[3]}"'
+        text += ",".join(fields) + "\r\n"
     path.write_bytes(text.encode("cp932"))
     return path
 
@@ -206,7 +207,7 @@ class TestCreate:
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]])
         out = tmp_path / "out"
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="3 行目"):
             create(src, out, now=NOW)
 
         assert not out.exists()
@@ -217,6 +218,16 @@ class TestCreate:
         bank, _ = create(src, tmp_path, now=NOW)
 
         assert "'㈱テスト'" in bank.read_text(encoding="utf-8")
+
+
+def test_golden_fixture(tmp_path):
+    """fixtures/sample.txt からの出力が、保存済みの期待ファイルとバイト単位で一致します。"""
+    fixtures = Path(__file__).parent / "fixtures"
+
+    bank, branch = create(fixtures / "sample.txt", tmp_path, now=NOW)
+
+    assert bank.read_bytes() == (fixtures / "bank.sql").read_bytes()
+    assert branch.read_bytes() == (fixtures / "branch.sql").read_bytes()
 
 
 class TestDeleteBeforeInsert:
@@ -354,7 +365,7 @@ class TestReadRows:
 
         banks, branches = read_rows(src)
 
-        assert banks == [list(BANK[:2]) + [BANK[2].ljust(15)] + list(BANK[3:])]
+        assert banks == [[*BANK[:2], BANK[2].ljust(15), *BANK[3:]]]
         assert len(branches) == 2
 
     def test_decode_error_reports_line_number(self, tmp_path):
@@ -368,7 +379,7 @@ class TestReadRows:
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
         src.write_bytes(b"\xef\xbb\xbf" + src.read_bytes())
 
-        with pytest.raises(ValueError, match="^1 行目"):
+        with pytest.raises(ValueError, match=r"^1 行目"):
             read_rows(src)
 
 

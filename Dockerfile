@@ -30,4 +30,4 @@ COPY tests ./tests
 USER app
 
 ENTRYPOINT []
-CMD ["sh", "-c", "ruff check . && ruff format --check . && pytest"]
+CMD ["sh", "-c", "ruff check . && ruff format --check . && mypy && pytest"]

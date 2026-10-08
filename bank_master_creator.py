@@ -128,7 +128,7 @@ def write_sql(
 
     delete_before_insert が真なら、トランザクション内でテーブルを空にしてから INSERT します。
     """
-    prefix = (now or datetime.now()).strftime("(%Y%m%d_%H%M%S)")
+    prefix = (now or datetime.now().astimezone()).strftime("(%Y%m%d_%H%M%S)")
     output_dir.mkdir(parents=True, exist_ok=True)
     bank_path = output_dir / f"{prefix}銀行マスタINSERT.sql"
     branch_path = output_dir / f"{prefix}支店マスタINSERT.sql"

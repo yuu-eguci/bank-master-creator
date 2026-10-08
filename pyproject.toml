@@ -6,6 +6,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "mypy==2.4.0",
     "pytest==9.1.1",
     "ruff==0.16.10",
 ]
@@ -15,10 +16,21 @@ line-length = 100
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "N", "S", "SIM", "PTH"]
+select = ["E", "F", "W", "I", "UP", "B", "N", "S", "SIM", "PTH", "DTZ", "PT", "PL", "RUF"]
+ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "DTZ001"]
+
+[tool.mypy]
+files = ["bank_master_creator.py", "tests"]
+strict = true
+
+[[tool.mypy.overrides]]
+# テストは引数の型注釈を省略します。
+module = "test_bank_master_creator"
+disallow_untyped_defs = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
