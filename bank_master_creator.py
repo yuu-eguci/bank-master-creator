@@ -123,12 +123,14 @@ def write_sql(
     now: datetime | None = None,
     *,
     delete_before_insert: bool = False,
+    timestamp: bool = True,
 ) -> tuple[Path, Path]:
     """output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出し、2 つのパスを返します。
 
     delete_before_insert が真なら、トランザクション内でテーブルを空にしてから INSERT します。
+    timestamp が偽なら、ファイル名の先頭に日時を付けません。
     """
-    prefix = (now or datetime.now().astimezone()).strftime("(%Y%m%d_%H%M%S)")
+    prefix = (now or datetime.now().astimezone()).strftime("(%Y%m%d_%H%M%S)") if timestamp else ""
     output_dir.mkdir(parents=True, exist_ok=True)
     bank_path = output_dir / f"{prefix}銀行マスタINSERT.sql"
     branch_path = output_dir / f"{prefix}支店マスタINSERT.sql"
@@ -152,13 +154,21 @@ def create(
     now: datetime | None = None,
     *,
     delete_before_insert: bool = False,
+    timestamp: bool = True,
 ) -> tuple[Path, Path]:
     """input_path を読み、output_dir に銀行マスタ・支店マスタの INSERT SQL を書き出します。
 
     不正な行があれば ValueError を送出します。その場合ファイルは作りません。
     """
     banks, branches = read_rows(input_path)
-    return write_sql(banks, branches, output_dir, now, delete_before_insert=delete_before_insert)
+    return write_sql(
+        banks,
+        branches,
+        output_dir,
+        now,
+        delete_before_insert=delete_before_insert,
+        timestamp=timestamp,
+    )
 
 
 # 元データのｶﾅは 15 文字で切られているため、15 文字ちょうどなら切り詰めの可能性があります。
@@ -239,6 +249,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="トランザクション内でテーブルを空にしてから INSERT する (入れ直し用)",
     )
     parser.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="ファイル名の先頭に日時を付けない (銀行マスタINSERT.sql, 支店マスタINSERT.sql)",
+    )
+    parser.add_argument(
         "--check", action="store_true", help="ファイルを作らず、件数と検査結果だけを表示する"
     )
     args = parser.parse_args(argv)
@@ -273,7 +288,11 @@ def main(argv: list[str] | None = None) -> None:
             _fail("データに問題があります。")
         return
     paths = write_sql(
-        banks, branches, args.output_dir, delete_before_insert=args.delete_before_insert
+        banks,
+        branches,
+        args.output_dir,
+        delete_before_insert=args.delete_before_insert,
+        timestamp=not args.no_timestamp,
     )
     for path in paths:
         print(path)

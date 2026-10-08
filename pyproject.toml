@@ -19,6 +19,10 @@ target-version = "py314"
 select = ["E", "F", "W", "I", "UP", "B", "N", "S", "SIM", "PTH", "DTZ", "PT", "PL", "RUF"]
 ignore = ["PLR2004"]
 
+[tool.ruff.lint.pylint]
+# write_sql はデータ 3 つ + 日時 + キーワード専用のフラグ 2 つです。
+max-args = 6
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "DTZ001"]
 

@@ -359,6 +359,29 @@ class TestCheck:
         assert excinfo.value.code == 2
 
 
+class TestNoTimestamp:
+    def test_fixed_names(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        bank, branch = create(src, tmp_path, timestamp=False)
+
+        assert bank == tmp_path / "銀行マスタINSERT.sql"
+        assert branch == tmp_path / "支店マスタINSERT.sql"
+        assert bank.read_text(encoding="utf-8").startswith("SET NAMES utf8mb4;\n")
+
+    def test_main_flag(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        out = tmp_path / "out"
+
+        main(["--input", str(src), "--output-dir", str(out), "--no-timestamp"])
+
+        assert sorted(p.name for p in out.iterdir()) == [
+            "支店マスタINSERT.sql",
+            "銀行マスタINSERT.sql",
+        ]
+        assert str(out / "銀行マスタINSERT.sql") in capsys.readouterr().out
+
+
 class TestReadRows:
     def test_splits_banks_and_branches(self, tmp_path):
         src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
