@@ -71,6 +71,8 @@ docker compose run --rm app --stdout --delete-before-insert --rows-per-insert 50
 
 ## DB definition
 
+テーブルの文字コードは utf8mb4 にしてください。MySQL 5.7 など既定が latin1 のサーバでは、指定がないと日本語を入れられず `Incorrect string value` になります (出力の読み込みは MySQL 8.4、MySQL 5.7、MariaDB 11 で確認しています)。
+
 銀行マスタ
 
 ```sql
@@ -83,7 +85,7 @@ CREATE TABLE `m_banks` (
   `create_by` INT(11) NULL DEFAULT NULL COMMENT 'INSERT者',
   `update_at` DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UPDATE日',
   `update_by` INT(11) NULL DEFAULT NULL COMMENT 'UPDATE者',
-  PRIMARY KEY (`bank_id`));
+  PRIMARY KEY (`bank_id`)) DEFAULT CHARSET=utf8mb4;
 ```
 
 支店マスタ
@@ -99,7 +101,7 @@ CREATE TABLE `m_bank_branches` (
   `create_by` int(11) DEFAULT NULL COMMENT 'INSERT者',
   `update_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UPDATE日',
   `update_by` int(11) DEFAULT NULL COMMENT 'UPDATE者',
-  PRIMARY KEY (`bank_branch_id`));
+  PRIMARY KEY (`bank_branch_id`)) DEFAULT CHARSET=utf8mb4;
 ```
 
 読み込み後の確認用クエリです。最初の 2 つは実行時に表示された `銀行 1338 件、支店 31048 件` と一致し、重複のクエリは行を返さず、最後のクエリは 0 になるはずです。
