@@ -27,15 +27,24 @@ docker compose run --rm --build app
 - Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
 - テストと lint と型チェック (mypy): `docker compose run --rm --build test`
 - Docker なし (Python 3.14): `python bank_master_creator.py`
-- 入力・出力先の変更: `--input PATH` と `--output-dir PATH` で指定します (既定は `ginkositen.txt` と `output/`)。Docker では `docker compose run --rm app --check` のように引数をそのまま渡せますが、コンテナから見えるのは `ginkositen.txt` と `output/` だけです (他のパスを使う場合は Docker なしで実行してください)。
 - 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。
-- 固定のファイル名で出力: `--no-timestamp` を付けると `銀行マスタINSERT.sql` と `支店マスタINSERT.sql` という名前になります (スクリプトから扱いやすく、前回の出力と diff しやすくなります)。
-- 書き出さずに確認: `--check` を付けると、ファイルを作らずに件数と検査結果を表示します。検査項目は銀行コードの重複、銀行+支店コードの重複、銀行行のない支店 (以上は該当コードも表示し、あれば終了コード 1)、支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性。件数のみ) です。
-- 新旧データの比較: `--diff-from OLD` を付けると、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します (ファイルは作りません)。再ダウンロードしたデータを入れ直す前の確認に使います。
-- `--check`、`--diff-from`、`--delete-before-insert` は同時に指定できません。
-- 入れ直し (洗い替え): `--delete-before-insert` を付けると、各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。データを再ダウンロードして入れ直すときに使います。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。
 - 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
-- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外) があると、行番号を示してエラーで止まります。入力ファイルがない、cp932 として読めない、出力先に書き出せない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。
+- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外、引用符が閉じていない) があると、行番号を示してエラーで止まります。入力ファイルがない、cp932 として読めない、出力先に書き出せない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。
+
+## Options
+
+`docker compose run --rm app --check` のように引数をそのまま渡せます。ただしコンテナから見えるのは `ginkositen.txt` と `output/` だけなので、他のパスを使う場合は Docker なしで実行してください。
+
+| オプション | 説明 |
+| --- | --- |
+| `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。 |
+| `--output-dir PATH` | 出力先ディレクトリです (既定: `output/`)。 |
+| `--no-timestamp` | ファイル名を `銀行マスタINSERT.sql`・`支店マスタINSERT.sql` に固定します。スクリプトから扱いやすく、前回の出力と diff しやすくなります。 |
+| `--delete-before-insert` | 入れ直し (洗い替え) 用です。各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。 |
+| `--check` | ファイルを作らず、件数と検査結果を表示します。銀行コードの重複、銀行+支店コードの重複、銀行行のない支店は該当コードも表示し、あれば終了コード 1 です。支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性) は件数のみです。 |
+| `--diff-from OLD` | ファイルを作らず、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します。再ダウンロードしたデータを入れ直す前の確認に使います。 |
+
+`--delete-before-insert`、`--check`、`--diff-from` は同時に指定できません。
 
 ## DB definition
 
