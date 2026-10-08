@@ -463,14 +463,17 @@ class TestStdout:
 
         assert excinfo.value.code == 2
 
-    def test_broken_pipe_has_no_traceback(self, tmp_path):
-        """mysql が途中で終了してパイプが閉じても、トレースバックを出しません。"""
-        rows = [("0001", f"{i:03d}", "ｼﾃﾝ", f"支店{i}", "2") for i in range(1000, 4000)]
+    @pytest.mark.parametrize("mode", ["--stdout", "--diff-from"])
+    def test_broken_pipe_has_no_traceback(self, tmp_path, mode):
+        """mysql や head が途中で終了してパイプが閉じても、トレースバックを出しません。"""
+        rows = [("0001", f"{i:05d}", "ｼﾃﾝ", f"支店{i}", "2") for i in range(30000)]
         src = write_input(tmp_path / "in.txt", [BANK, *rows])
+        old = write_input(tmp_path / "old.txt", [BANK])
         script = Path(__file__).parent.parent / "bank_master_creator.py"
+        args = [mode, str(old)] if mode == "--diff-from" else [mode]
 
         proc = subprocess.Popen(  # noqa: S603 (引数は固定です)
-            [sys.executable, str(script), "--input", str(src), "--stdout"],
+            [sys.executable, str(script), "--input", str(src), *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -725,6 +728,14 @@ class TestMain:
         main(["--input", str(src), "--check"])
 
         assert capsys.readouterr().out.startswith("銀行: 0 件、支店: 0 件\n")
+
+    def test_closed_stdout_is_tolerated(self, tmp_path, monkeypatch, capsys):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        monkeypatch.setattr(sys, "stdout", None)
+
+        main(["--input", str(src), "--output-dir", str(tmp_path / "out")])
+
+        assert capsys.readouterr().err == "銀行 1 件、支店 1 件\n"
 
     def test_help_mentions_options(self, capsys):
         with pytest.raises(SystemExit) as excinfo:

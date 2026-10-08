@@ -404,9 +404,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return args
 
 
+def _flush_stdout() -> None:
+    # 標準出力をパイプした場合でも、先に出した内容の後ろにエラーや件数が並ぶようにします。
+    if sys.stdout is not None:
+        sys.stdout.flush()
+
+
 def _fail(message: str) -> NoReturn:
-    # 標準出力をパイプした場合でも、先に出した内容の後ろにエラーが並ぶようにします。
-    sys.stdout.flush()
+    _flush_stdout()
     print(f"エラー: {message}", file=sys.stderr)
     sys.exit(1)
 
@@ -426,8 +431,12 @@ def _read_or_fail(path: Path) -> tuple[list[list[str]], list[list[str]]]:
         _fail(str(e))
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = _parse_args(argv)
+def _print_summary(banks: list[list[str]], branches: list[list[str]]) -> None:
+    _flush_stdout()
+    print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
+
+
+def _run(args: argparse.Namespace) -> None:
     banks, branches = _read_or_fail(args.input)
     if args.check:
         report = check(banks, branches)
@@ -447,20 +456,13 @@ def main(argv: list[str] | None = None) -> None:
         if isinstance(sys.stdout, io.TextIOWrapper):
             # Windows など、標準出力が UTF-8 でない環境のためです。
             sys.stdout.reconfigure(encoding="utf-8", newline="\n")
-        try:
-            write_sql_stream(
-                banks,
-                branches,
-                sys.stdout,
-                delete_before_insert=args.delete_before_insert,
-                rows_per_insert=args.rows_per_insert,
-            )
-            sys.stdout.flush()
-        except BrokenPipeError:
-            # パイプの先 (mysql など) が先に終了した場合です。
-            # 終了時の flush でまた失敗しないよう、標準出力を /dev/null に向けます。
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-            _fail("標準出力に書き出せません (パイプの先が終了しました)。")
+        write_sql_stream(
+            banks,
+            branches,
+            sys.stdout,
+            delete_before_insert=args.delete_before_insert,
+            rows_per_insert=args.rows_per_insert,
+        )
         _print_summary(banks, branches)
         return
     try:
@@ -481,9 +483,16 @@ def main(argv: list[str] | None = None) -> None:
     _print_summary(banks, branches)
 
 
-def _print_summary(banks: list[list[str]], branches: list[list[str]]) -> None:
-    sys.stdout.flush()
-    print(f"銀行 {len(banks)} 件、支店 {len(branches)} 件", file=sys.stderr)
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    try:
+        _run(args)
+        _flush_stdout()
+    except BrokenPipeError:
+        # パイプの先 (mysql や head など) が先に終了した場合です。
+        # 終了時の flush でまた失敗しないよう、標準出力を /dev/null に向けます。
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        _fail("標準出力に書き出せません (パイプの先が終了しました)。")
 
 
 if __name__ == "__main__":
