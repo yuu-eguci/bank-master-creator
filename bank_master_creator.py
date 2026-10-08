@@ -346,7 +346,8 @@ def _positive_int(text: str) -> int:
     return value
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
+    """コマンドライン引数のパーサを作ります。"""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--input",
@@ -392,6 +393,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="OLD",
         help="ファイルを作らず、OLD から --input への追加・削除・名称変更を表示する",
     )
+    return parser
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.stdout and (args.check or args.diff_from):
         parser.error("--stdout は --check, --diff-from と同時に指定できません。")
@@ -423,15 +429,19 @@ def _read_or_fail(path: Path) -> tuple[list[list[str]], list[list[str]]]:
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     banks, branches = _read_or_fail(args.input)
-    if args.diff_from:
-        old_banks, old_branches = _read_or_fail(args.diff_from)
-        print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
-        return
     if args.check:
         report = check(banks, branches)
         print("\n".join(report.lines()))
         if report.problems:
             _fail("データに問題があります。")
+        return
+    if not banks and not branches:
+        # --delete-before-insert で空のデータを流すとテーブルが空になるため、ここで止めます。
+        _fail("入力に行がありません。")
+    if args.diff_from:
+        old_banks, old_branches = _read_or_fail(args.diff_from)
+        print(f"{args.diff_from} → {args.input}")
+        print("\n".join(diff_lines(diff_rows(old_banks, banks), diff_rows(old_branches, branches))))
         return
     if args.stdout:
         if isinstance(sys.stdout, io.TextIOWrapper):

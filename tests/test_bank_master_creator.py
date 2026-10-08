@@ -8,6 +8,7 @@ import pytest
 
 import bank_master_creator
 from bank_master_creator import (
+    build_parser,
     check,
     create,
     diff_rows,
@@ -545,6 +546,7 @@ class TestDiff:
         main(["--input", str(new), "--diff-from", str(old), "--output-dir", str(tmp_path / "out")])
 
         assert capsys.readouterr().out == (
+            f"{old} → {new}\n"
             "銀行: 追加 1 件、削除 1 件、名称変更 0 件\n"
             "支店: 追加 1 件、削除 0 件、名称変更 1 件\n"
             "+ 銀行 0003 ウ銀行 (ｳ)\n"
@@ -707,6 +709,23 @@ class TestMain:
             "エラー: 1 行目: cp932 として読めません (UTF-8 で保存していませんか?)\n"
         )
 
+    def test_empty_input_exits_1(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", ["", ""])
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--output-dir", str(tmp_path / "out")])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 入力に行がありません。\n"
+        assert not (tmp_path / "out").exists()
+
+    def test_empty_input_is_fine_for_check(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", [""])
+
+        main(["--input", str(src), "--check"])
+
+        assert capsys.readouterr().out.startswith("銀行: 0 件、支店: 0 件\n")
+
     def test_help_mentions_options(self, capsys):
         with pytest.raises(SystemExit) as excinfo:
             main(["--help"])
@@ -715,3 +734,16 @@ class TestMain:
         out = capsys.readouterr().out
         assert "--input" in out
         assert "--output-dir" in out
+
+
+def test_readme_options_table_matches_parser():
+    """README の Options 表にある引数と argparse の引数が一致します。"""
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    documented = {
+        line.split("`")[1].split()[0] for line in readme.splitlines() if line.startswith("| `--")
+    }
+    parser_options = {
+        option for action in build_parser()._actions for option in action.option_strings
+    }
+
+    assert documented == parser_options - {"-h", "--help"}

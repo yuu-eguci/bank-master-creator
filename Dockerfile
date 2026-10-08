@@ -25,6 +25,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir --group dev \
     && chown app:app /app
 
+COPY README.md ./
 COPY tests ./tests
 
 USER app
