@@ -1,0 +1,220 @@
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+import bank_master_creator
+from bank_master_creator import (
+    create,
+    escape,
+    main,
+    make_bank_insert_sql,
+    make_branch_insert_sql,
+    quote,
+)
+
+NOW = datetime(2026, 1, 2, 3, 4, 5)
+BANK_SQL = "(20260102_030405)銀行マスタINSERT.sql"
+BRANCH_SQL = "(20260102_030405)支店マスタINSERT.sql"
+
+BANK = ("0001", "000", "ﾃｽﾄ", "テスト銀行", "1")
+BRANCH = ("0001", "001", "ﾃｽﾄｼﾃﾝ", "テスト支店", "2")
+
+
+def write_input(path: Path, lines: list[tuple[str, ...] | str]) -> Path:
+    """合成データを ginkositen.txt と同じ形式で書き出します。
+
+    cp932, CRLF で、ｶﾅは 15 桁に埋め、ｶﾅと名前は引用符で囲みます。
+    """
+    text = ""
+    for line in lines:
+        if isinstance(line, tuple):
+            fields = list(line)
+            if len(fields) == 5:
+                fields[2] = f'"{fields[2].ljust(15)}"'
+                fields[3] = f'"{fields[3]}"'
+            line = ",".join(fields)
+        text += line + "\r\n"
+    path.write_bytes(text.encode("cp932"))
+    return path
+
+
+def bank_row(name="テスト銀行", kana="ﾃｽﾄ"):
+    return ["0001", "000", kana.ljust(15), name, "1"]
+
+
+def branch_row(name="テスト支店", kana="ﾃｽﾄｼﾃﾝ"):
+    return ["0001", "001", kana.ljust(15), name, "2"]
+
+
+class TestEscape:
+    def test_passthrough(self):
+        assert escape("テスト銀行 ﾃｽﾄ-1") == "テスト銀行 ﾃｽﾄ-1"
+
+    def test_single_quote(self):
+        assert escape("テスト'銀行") == "テスト\\'銀行"
+
+    def test_backslash(self):
+        assert escape("a\\b") == "a\\\\b"
+
+    def test_escaped_quote_input(self):
+        assert escape("\\'") == "\\\\\\'"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("\x00", "\\0"),
+            ("\n", "\\n"),
+            ("\r", "\\r"),
+            ("\x1a", "\\Z"),
+        ],
+    )
+    def test_control_chars(self, raw, expected):
+        assert escape(f"a{raw}b") == f"a{expected}b"
+
+
+def test_quote():
+    assert quote("テスト'銀行") == "'テスト\\'銀行'"
+
+
+class TestMakeBankInsertSql:
+    def test_exact(self):
+        assert make_bank_insert_sql(bank_row()) == (
+            "INSERT INTO m_banks (bank_code, bank_name, bank_name_kana) "
+            "VALUES ('0001', 'テスト銀行', 'ﾃｽﾄ');"
+        )
+
+    def test_quote_in_name(self):
+        sql = make_bank_insert_sql(bank_row(name="テスト'銀行"))
+        assert "'テスト\\'銀行'" in sql
+
+
+class TestMakeBranchInsertSql:
+    def test_exact(self):
+        assert make_branch_insert_sql(branch_row()) == (
+            "INSERT INTO m_bank_branches (bank_code, branch_code, branch_name, branch_name_kana) "
+            "VALUES ('0001', '001', 'テスト支店', 'ﾃｽﾄｼﾃﾝ');"
+        )
+
+    def test_quote_in_name(self):
+        sql = make_branch_insert_sql(branch_row(name="テスト'支店"))
+        assert "'テスト\\'支店'" in sql
+
+
+class TestKana:
+    def test_strips_trailing_ascii_spaces_only(self):
+        sql = make_bank_insert_sql(bank_row(kana=" ﾃｽﾄ\u3000"))
+        assert sql.endswith("' ﾃｽﾄ\u3000');")
+
+
+class TestCreate:
+    def test_writes_both_files(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH])
+        out = tmp_path / "out"
+
+        bank, branch = create(src, out, now=NOW)
+
+        assert bank == out / BANK_SQL
+        assert branch == out / BRANCH_SQL
+        assert bank.read_text(encoding="utf-8").splitlines() == [
+            "INSERT INTO m_banks (bank_code, bank_name, bank_name_kana)"
+            " VALUES ('0001', 'テスト銀行', 'ﾃｽﾄ');",
+        ]
+        assert len(branch.read_text(encoding="utf-8").splitlines()) == 2
+
+    def test_comma_in_quoted_name(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [("0001", "000", "ﾃｽﾄ", "テスト,銀行", "1")])
+
+        bank, _ = create(src, tmp_path, now=NOW)
+
+        assert "'テスト,銀行'" in bank.read_text(encoding="utf-8")
+
+    def test_utf8_and_lf_only(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        for path in create(src, tmp_path, now=NOW):
+            data = path.read_bytes()
+            assert b"\r" not in data
+            assert data.endswith(b";\n")
+            data.decode("utf-8")
+
+    def test_shares_one_timestamp(self, tmp_path, monkeypatch):
+        class FakeDatetime:
+            current = NOW
+
+            @classmethod
+            def now(cls):
+                cls.current += timedelta(seconds=1)
+                return cls.current
+
+        monkeypatch.setattr(bank_master_creator, "datetime", FakeDatetime)
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        bank, branch = create(src, tmp_path)
+
+        assert bank.name.split(")")[0] == branch.name.split(")")[0]
+
+    def test_overwrites_existing(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+        (tmp_path / BANK_SQL).write_text("old\nold\nold\n", encoding="utf-8")
+
+        bank, _ = create(src, tmp_path, now=NOW)
+
+        assert bank.read_text(encoding="utf-8") == make_bank_insert_sql(list(BANK)) + "\n"
+
+    def test_creates_nested_output_dir(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH])
+
+        bank, branch = create(src, tmp_path / "a" / "b", now=NOW)
+
+        assert bank.exists()
+        assert branch.exists()
+
+    def test_skips_blank_lines(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, "", BRANCH, ""])
+
+        bank, branch = create(src, tmp_path, now=NOW)
+
+        assert len(bank.read_text(encoding="utf-8").splitlines()) == 1
+        assert len(branch.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_rejects_unknown_flag(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, (*BRANCH[:4], "3")])
+
+        with pytest.raises(ValueError, match="2 行目"):
+            create(src, tmp_path / "out", now=NOW)
+
+    def test_rejects_wrong_field_count(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]])
+
+        with pytest.raises(ValueError, match="3 行目"):
+            create(src, tmp_path / "out", now=NOW)
+
+    def test_invalid_input_leaves_no_files(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [BANK, BRANCH, BRANCH[:4]])
+        out = tmp_path / "out"
+
+        with pytest.raises(ValueError):
+            create(src, out, now=NOW)
+
+        assert not out.exists()
+
+    def test_cp932_only_char(self, tmp_path):
+        src = write_input(tmp_path / "in.txt", [(*BANK[:3], "㈱テスト", "1")])
+
+        bank, _ = create(src, tmp_path, now=NOW)
+
+        assert "'㈱テスト'" in bank.read_text(encoding="utf-8")
+
+
+def test_main_uses_default_paths(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    write_input(tmp_path / "ginkositen.txt", [BANK, BRANCH])
+
+    main()
+
+    files = sorted(p.name for p in (tmp_path / "output").iterdir())
+    assert len(files) == 2
+    printed = capsys.readouterr().out
+    for name in files:
+        assert name in printed

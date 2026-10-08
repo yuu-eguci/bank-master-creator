@@ -1,0 +1,9 @@
+.git
+output
+*.sql
+__pycache__
+.pytest_cache
+.ruff_cache
+ginkositen.txt
+docs
+.github

@@ -4,6 +4,8 @@
 __pycache__/
 
 *.sql
+.pytest_cache/
+.ruff_cache/
 
 # これは最後に書かないとダメ。
 !.gitkeep

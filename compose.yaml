@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    environment:
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      - ./ginkositen.txt:/app/ginkositen.txt:ro
+      - ./output:/app/output
+
+  test:
+    build:
+      context: .
+      target: dev

@@ -1,16 +1,34 @@
-
 BankMasterCreator
 ===
 
-[http://ykaku.com/ginkokensaku/index.php](http://ykaku.com/ginkokensaku/index.php)
+[http://ykaku.com/ginkokensaku/index.php](http://ykaku.com/ginkokensaku/index.php) でダウンロードできる銀行支店データ (`ginkositen.txt`) から、銀行マスタ・支店マスタの INSERT SQL を作成します。
 
-ここでDLできる銀行支店データを使って銀行マスタのSQLを作成します。
+- Docker: 対応!
+- Python: 3.14!
+- Linter: ruff!
+- Test: pytest!
+
+## パッと実行してみたい
+
+```bash
+docker compose run --rm --build app
+```
+
+`output/` に次の 2 ファイルができます。
+
+- `(YYYYmmdd_HHMMSS)銀行マスタINSERT.sql`: `m_banks` への INSERT 文です。
+- `(YYYYmmdd_HHMMSS)支店マスタINSERT.sql`: `m_bank_branches` への INSERT 文です。
+
+文字コードは UTF-8 で、1 行に 1 つの INSERT 文を出力します。同名ファイルがあれば上書きします。Docker 実行時、ファイル名の日時は日本時間です (環境変数 `TZ` で変更できます)。
 
 ## Usage
 
-```bash
-$ python BankMasterCreator.py
-```
+- データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。
+- Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
+- テストと lint: `docker compose run --rm --build test`
+- Docker なし (Python 3.14): `python bank_master_creator.py`
+- 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
+- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外) があると、行番号を示してエラーで止まります。
 
 ## DB definition
 
