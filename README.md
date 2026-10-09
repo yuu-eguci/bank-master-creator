@@ -1,7 +1,7 @@
 BankMasterCreator
 ===
 
-[http://ykaku.com/ginkokensaku/index.php](http://ykaku.com/ginkokensaku/index.php) でダウンロードできる銀行支店データ (`ginkositen.txt`) から、銀行マスタ・支店マスタの INSERT SQL を作成します。
+[銀行支店データ](http://ykaku.com/ginkokensaku/index.php) から、銀行マスタ・支店マスタの INSERT SQL を作るやつ。
 
 - Docker: 対応!
 - Python: 3.14!
@@ -14,115 +14,83 @@ BankMasterCreator
 docker compose run --rm --build app
 ```
 
-`output/` に次の 2 ファイルができます。
+`output/` に銀行用・支店用の SQL ができる。文字コードは UTF-8。
 
-- `(YYYYmmdd_HHMMSS)銀行マスタINSERT.sql`: `m_banks` への INSERT 文です。
-- `(YYYYmmdd_HHMMSS)支店マスタINSERT.sql`: `m_bank_branches` への INSERT 文です。
+- `(YYYYmmdd_HHMMSS)銀行マスタINSERT.sql` --> `m_banks` 用
+- `(YYYYmmdd_HHMMSS)支店マスタINSERT.sql` --> `m_bank_branches` 用
 
-文字コードは UTF-8 です。先頭行は `SET NAMES utf8mb4;` で、以降は 1 行に 1 つの INSERT 文です (`--rows-per-insert` を使った場合を除きます)。同名ファイルがあれば上書きします。Docker 実行時、ファイル名の日時は日本時間です (環境変数 `TZ` で変更できます)。
+同名ファイルは上書き。ファイル名の日時は日本時間。
 
-同梱の `ginkositen.txt` は 2018 年 9 月に取得したデータで、内容は 2018 年 4 月ごろの時点です (その後の合併や名称変更は反映されていません)。実際に使うときは最新版をダウンロードして差し替え、次の順で進めるのがおすすめです。
+同梱データは 2018 年ごろのもの。実際に使うなら `ginkositen.txt` を最新版に差し替えてね。
+入力は Shift_JIS / CP932。データの差し替えだけなら再ビルド不要。
+
+## SQL を作る前に
 
 ```bash
-python bank_master_creator.py --check                                   # 件数と整合性を確認
-python bank_master_creator.py --diff-from old/ginkositen.txt            # 前回のデータとの差分を確認
-python bank_master_creator.py --no-timestamp --delete-before-insert     # 入れ直し用の SQL を作成
-mysql --default-character-set=utf8mb4 -u user -p db < output/銀行マスタINSERT.sql
-mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSERT.sql
+docker compose run --rm app --check
 ```
 
-既定のファイル名には `(` `)` が含まれるので、シェルで指定するときは `"output/(20260102_030405)銀行マスタINSERT.sql"` のように引用符で囲みます。
+件数・コードの重複・銀行が見つからない支店をチェックする。SQL はまだ作らない。
 
-入力ファイルと出力ファイルの形式は [docs/format.md](docs/format.md) にまとめています。
-
-## Usage
-
-- データの差し替え: `ginkositen.txt` (Shift_JIS/CP932) を上書きして再実行します。再ビルドは不要です。
-- Linux でユーザ ID が 1000 以外の場合: `docker compose run --rm --build --user "$(id -u):$(id -g)" app`
-- テストと lint と型チェック (mypy): `docker compose run --rm --build test`
-- Docker なし (Python 3.11 以上。CI では 3.11 と 3.14 で確認しています。古い Python では `エラー:` で始まる 1 行を表示して止まります): `python bank_master_creator.py`
-- 終了時に `銀行 1338 件、支店 31048 件` のような件数を標準エラー出力に表示します。
-- 文字列は MySQL 向けにエスケープします (`\`, `'`, NUL, 改行, CR, Ctrl-Z)。sql_mode の `NO_BACKSLASH_ESCAPES` には対応していません。
-- 不正な行 (項目数が 5 でない、種別フラグが 1/2 以外、引用符が閉じていない) があると、行番号を示してエラーで止まります (引用符のエラーは検出した行なので目安です)。入力ファイルがない (Docker では空のディレクトリ `ginkositen.txt` ができるので削除してください)、入力に行が 1 つもない (`--check` を除く)、cp932 として読めない、出力先に書き出せない場合も `エラー:` で始まる 1 行を表示して終了コード 1 で止まります。
-
-## Options
-
-`docker compose run --rm app --check` のように引数をそのまま渡せます。ただしコンテナから見えるのは `ginkositen.txt` と `output/` だけなので、他のパスを使う場合は Docker なしで実行してください。
-
-| オプション | 説明 |
-| --- | --- |
-| `--input PATH` | 入力ファイルです (既定: `ginkositen.txt`)。`-` を指定すると標準入力から読みます。`--diff-from` の OLD にも `-` を使えます (両方は不可)。例: `docker compose run --rm -T app --input - --diff-from ginkositen.txt < new.txt` |
-| `--output-dir PATH` | 出力先ディレクトリです (既定: `output/`)。 |
-| `--bank-code CODES` | 指定した銀行 (4 桁のコード。カンマ区切りか複数回指定) とその支店だけを対象にします。開発用 DB に少量のデータを入れるときに使い、`--check` や `--diff-from` にも効きます。入力にないコードを指定するとエラーです。例: `--bank-code 0001,0005 --stdout --delete-before-insert` |
-| `--no-timestamp` | ファイル名を `銀行マスタINSERT.sql`・`支店マスタINSERT.sql` に固定します。スクリプトから扱いやすく、前回の出力と diff しやすくなります。 |
-| `--rows-per-insert N` | 1 つの INSERT 文に N 行をまとめます (既定: 1)。`VALUES` の各行は改行で区切ります。手元の MySQL 8.4 では支店 31048 件の読み込みが、既定で約 24 秒、`--delete-before-insert` (トランザクション) で約 1.6 秒、`--rows-per-insert 500` で約 0.3 秒でした。 |
-| `--stdout` | ファイルを作らず、銀行マスタ・支店マスタの SQL を 1 つにまとめて標準出力に書きます (`SET NAMES` は先頭に 1 回、`--delete-before-insert` では両テーブルを 1 つのトランザクションで入れ直します)。mysql へ直接流し込むときに使います (下の例を参照)。 |
-| `--delete-before-insert` | 入れ直し (洗い替え) 用です。各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。 |
-| `--check` | ファイルを作らず、件数と検査結果を表示します。銀行コードの重複、銀行+支店コードの重複、銀行行のない支店は該当コード (10 件まで) も表示し、あれば終了コード 1 です。支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性) は件数のみです。 |
-| `--search TEXT` | 銀行名またはｶﾅに TEXT を含む銀行を `銀行コード<TAB>000<TAB>名称<TAB>ｶﾅ` の形式で表示します (ファイルは作りません)。全角・半角や大文字・小文字の違いは無視します。銀行名に「銀行」は付いていないので `みずほ` のように指定します。該当がなければ終了コード 1 です。 |
-| `--loose-kana` | `--search` で、ひらがな・カタカナ、小さい「ャュョッ」と大きい「ヤユヨツ」、長音「ー」と `-` の違いも無視します。元データのｶﾅは小さい文字を使わず (東京は `ﾄｳｷﾖｳ`)、長音を `-` で表すため、`トウキョウ` や `のうきょう` で探すときに使います。一致する銀行が増えるだけで、表示の形式は変わりません。 |
-| `--list CODE` | 銀行コード CODE の銀行とその支店を `銀行コード<TAB>支店コード<TAB>名称<TAB>ｶﾅ` の形式で表示します (ファイルは作りません)。支店を探すときは `--list 0001 \| grep 渋谷` のようにします。 |
-| `--version` | バージョンを表示します。 |
-| `--diff-from OLD` | ファイルを作らず、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します (先頭行に `OLD → 新ファイル` を示します)。再ダウンロードしたデータを入れ直す前の確認に使います。コードが重複しているデータでは後の行を使うので、先に `--check` で確認してください。 |
-
-銀行検索と支店一覧の実行例です。名前・コード・カナを標準出力に表示し、SQL ファイルは作りません。件数は標準エラー出力に表示します。
+## 銀行や支店を探す
 
 ```bash
 docker compose run --rm app --search みずほ
-docker compose run --rm app --search トウキョウ --loose-kana   # ｶﾅが ﾄｳｷﾖｳ を含む東京都民・新銀行東京・東京スターなどが見つかります
+docker compose run --rm app --search トウキョウ --loose-kana
 docker compose run --rm app --list 0001
 ```
 
-`--stdout` で mysql へ直接流し込む例です (`docker compose run` に `--build` を付けるとビルドのログが混ざるので、先にビルドしておきます)。
+検索結果はタブ区切りで表示。ここでも SQL は作らない。
+元データのカナは「東京」が `ﾄｳｷﾖｳ` だったりするので、ふつうの読み方で探すなら `--loose-kana` が便利。
+
+## Options
+
+`docker compose run --rm app --help` でも見られるよ。
+
+| オプション | なにする? |
+| --- | --- |
+| `--input PATH` | 入力ファイル。既定は `ginkositen.txt`。`-` なら標準入力。 |
+| `--output-dir PATH` | 出力先。既定は `output/`。 |
+| `--bank-code CODES` | 指定した銀行とその支店だけ。例: `0001,0005`。 |
+| `--no-timestamp` | ファイル名から日時を外す。 |
+| `--rows-per-insert N` | INSERT を N 行ずつまとめる。既定は 1。 |
+| `--stdout` | SQL をファイルじゃなく標準出力へ。 |
+| `--delete-before-insert` | 既存データを DELETE してから入れ直す SQL を作る。 |
+| `--check` | 件数とデータの整合性チェック。 |
+| `--diff-from OLD` | 古いデータとの差分を見る。 |
+| `--search TEXT` | 銀行名・カナで部分一致検索。 |
+| `--loose-kana` | 検索時にひらがな・小さいカナ・長音の違いも無視。 |
+| `--list CODE` | その銀行と支店を一覧表示。 |
+| `--version` | バージョンを見る。 |
+
+`--check`・`--diff-from`・`--search`・`--list`・`--delete-before-insert` はどれか 1 つ。
+`--stdout` と組み合わせられるのは、この中では `--delete-before-insert` だけ。
+`--loose-kana` は `--search` とセット。
+
+## DB に流し込むなら
+
+先に [テーブル定義](docs/database.md) を用意してね。文字コードは utf8mb4。
 
 ```bash
 docker compose build app
-docker compose run --rm app --stdout --delete-before-insert --rows-per-insert 500 | mysql --default-character-set=utf8mb4 -u user -p db
+docker compose run --rm app --stdout --rows-per-insert 500 | mysql --default-character-set=utf8mb4 -u user -p db
 ```
 
-`--delete-before-insert`、`--check`、`--diff-from`、`--search`、`--list` は同時に指定できません。`--stdout` もこれら (`--delete-before-insert` を除く) とは同時に指定できません。`--loose-kana` は `--search` と組み合わせたときだけ指定できます。オプションの指定が不正な場合は使い方を表示して終了コード 2 で止まります。
+銀行・支店の SQL をまとめて DB に流す。ビルドは先に済ませるとログが混ざらない。
 
-## DB definition
+入れ直すなら `--delete-before-insert` を追加。
+これは「既存データを消して入れ直す」オプションなので、対象 DB はよく確認してね。
+MySQL の `NO_BACKSLASH_ESCAPES` は非対応。
 
-テーブルの文字コードは utf8mb4 にしてください。MySQL 5.7 など既定が latin1 のサーバでは、指定がないと日本語を入れられず `Incorrect string value` になります (出力の読み込みは MySQL 8.4、MySQL 5.7、MariaDB 11 で確認しています)。
+## 開発するとき
 
-銀行マスタ
-
-```sql
-CREATE TABLE `m_banks` (
-  `bank_id` INT NOT NULL AUTO_INCREMENT COMMENT '銀行マスタ、banksのpk。ただし支店マスタとつなげるときはコレじゃなくてbank_codeを使うこと。',
-  `bank_code` VARCHAR(45) NULL COMMENT '銀行コード。支店マスタとつなげるときはこれを使う。',
-  `bank_name` VARCHAR(100) NULL COMMENT '銀行名。',
-  `bank_name_kana` VARCHAR(100) NULL COMMENT '銀行名ｶﾅ',
-  `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'INSERT日',
-  `create_by` INT(11) NULL DEFAULT NULL COMMENT 'INSERT者',
-  `update_at` DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UPDATE日',
-  `update_by` INT(11) NULL DEFAULT NULL COMMENT 'UPDATE者',
-  PRIMARY KEY (`bank_id`)) DEFAULT CHARSET=utf8mb4;
+```bash
+docker compose run --rm --build test
 ```
 
-支店マスタ
+テスト・lint・型チェックをまとめて実行。
 
-```sql
-CREATE TABLE `m_bank_branches` (
-  `bank_branch_id` int(11) NOT NULL AUTO_INCREMENT COMMENT '支店マスタ、bank_branchesのpk。ただし銀行マスタとつなげるときはbank_codeを使う。',
-  `bank_code` varchar(45) DEFAULT NULL COMMENT '銀行コード。銀行マスタとつなげるときはこれを使う。',
-  `branch_code` varchar(45) DEFAULT NULL COMMENT '支店コード。',
-  `branch_name` varchar(100) DEFAULT NULL COMMENT '支店名。',
-  `branch_name_kana` varchar(100) DEFAULT NULL COMMENT '支店名ｶﾅ',
-  `create_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'INSERT日',
-  `create_by` int(11) DEFAULT NULL COMMENT 'INSERT者',
-  `update_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'UPDATE日',
-  `update_by` int(11) DEFAULT NULL COMMENT 'UPDATE者',
-  PRIMARY KEY (`bank_branch_id`)) DEFAULT CHARSET=utf8mb4;
-```
+Docker なしなら Python 3.11 以上で `python bank_master_creator.py`。
+Linux で出力の権限に困ったら `--user "$(id -u):$(id -g)"` を `app` の前に追加してね。
 
-読み込み後の確認用クエリです。最初の 2 つは実行時に表示された `銀行 1338 件、支店 31048 件` と一致し、重複のクエリは行を返さず、最後のクエリは 0 になるはずです。
-
-```sql
-SELECT COUNT(*) FROM m_banks;
-SELECT COUNT(*) FROM m_bank_branches;
-SELECT bank_code, COUNT(*) FROM m_banks GROUP BY bank_code HAVING COUNT(*) > 1;
-SELECT bank_code, branch_code, COUNT(*) FROM m_bank_branches GROUP BY bank_code, branch_code HAVING COUNT(*) > 1;
-SELECT COUNT(*) FROM m_bank_branches b LEFT JOIN m_banks k ON k.bank_code = b.bank_code WHERE k.bank_id IS NULL;
-```
+入力・出力の細かい仕様は [データ形式](docs/format.md)、DB 定義と確認クエリは [DB の資料](docs/database.md) に置いてあるよ。
