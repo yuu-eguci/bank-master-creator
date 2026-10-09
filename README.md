@@ -60,6 +60,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 | `--delete-before-insert` | 入れ直し (洗い替え) 用です。各ファイルの INSERT の前に `START TRANSACTION;` と `DELETE FROM テーブル名;` が入り、末尾に `COMMIT;` が付きます。途中でエラーになると COMMIT されないので既存データは残ります。`AUTO_INCREMENT` の ID は振り直されません (結合には `bank_code` を使う前提です)。 |
 | `--check` | ファイルを作らず、件数と検査結果を表示します。銀行コードの重複、銀行+支店コードの重複、銀行行のない支店は該当コード (10 件まで) も表示し、あれば終了コード 1 です。支店のない銀行、ｶﾅが 15 文字の行 (元データの上限で切れている可能性) は件数のみです。 |
 | `--search TEXT` | 銀行名またはｶﾅに TEXT を含む銀行を `銀行コード<TAB>000<TAB>名称<TAB>ｶﾅ` の形式で表示します (ファイルは作りません)。全角・半角や大文字・小文字の違いは無視します。銀行名に「銀行」は付いていないので `みずほ` のように指定します。該当がなければ終了コード 1 です。 |
+| `--loose-kana` | `--search` で、ひらがな・カタカナ、小さい「ャュョッ」と大きい「ヤユヨツ」、長音「ー」と `-` の違いも無視します。元データのｶﾅは小さい文字を使わず (東京は `ﾄｳｷﾖｳ`)、長音を `-` で表すため、`トウキョウ` や `のうきょう` で探すときに使います。一致する銀行が増えるだけで、表示の形式は変わりません。 |
 | `--list CODE` | 銀行コード CODE の銀行とその支店を `銀行コード<TAB>支店コード<TAB>名称<TAB>ｶﾅ` の形式で表示します (ファイルは作りません)。支店を探すときは `--list 0001 \| grep 渋谷` のようにします。 |
 | `--version` | バージョンを表示します。 |
 | `--diff-from OLD` | ファイルを作らず、OLD (古い `ginkositen.txt`) から `--input` のファイルへの銀行・支店の追加 (`+`)・削除 (`-`)・名称変更 (`~`) を表示します (先頭行に `OLD → 新ファイル` を示します)。再ダウンロードしたデータを入れ直す前の確認に使います。コードが重複しているデータでは後の行を使うので、先に `--check` で確認してください。 |
@@ -68,6 +69,7 @@ mysql --default-character-set=utf8mb4 -u user -p db < output/支店マスタINSE
 
 ```bash
 docker compose run --rm app --search みずほ
+docker compose run --rm app --search トウキョウ --loose-kana   # ｶﾅが ﾄｳｷﾖｳ を含む東京都民・新銀行東京・東京スターなどが見つかります
 docker compose run --rm app --list 0001
 ```
 
@@ -78,7 +80,7 @@ docker compose build app
 docker compose run --rm app --stdout --delete-before-insert --rows-per-insert 500 | mysql --default-character-set=utf8mb4 -u user -p db
 ```
 
-`--delete-before-insert`、`--check`、`--diff-from`、`--search`、`--list` は同時に指定できません。`--stdout` もこれら (`--delete-before-insert` を除く) とは同時に指定できません。オプションの指定が不正な場合は使い方を表示して終了コード 2 で止まります。
+`--delete-before-insert`、`--check`、`--diff-from`、`--search`、`--list` は同時に指定できません。`--stdout` もこれら (`--delete-before-insert` を除く) とは同時に指定できません。`--loose-kana` は `--search` と組み合わせたときだけ指定できます。オプションの指定が不正な場合は使い方を表示して終了コード 2 で止まります。
 
 ## DB definition
 

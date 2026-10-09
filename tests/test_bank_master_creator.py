@@ -770,6 +770,57 @@ class TestLookup:
         assert search_banks(banks, "テスト") == [banks[0]]
         assert search_banks(banks, "") == banks
 
+    LOOSE_ROWS: ClassVar = [
+        ("0526", "000", "ﾄｳｷﾖｳｽﾀ-", "東京スター", "1"),
+        ("9900", "000", "ﾕｳﾁﾖ", "ゆうちょ", "1"),
+        ("0001", "000", "ﾐｽﾞﾎ", "みずほ", "1"),
+    ]
+
+    @pytest.mark.parametrize(
+        ("query", "code"),
+        [
+            ("トウキョウ", "0526"),
+            ("とうきょう", "0526"),
+            ("ﾄｳｷｮｳ", "0526"),
+            ("トウキョウスター", "0526"),
+            ("ﾄｳｷﾖｳｽﾀｰ", "0526"),
+            ("ユウチョ", "9900"),
+            ("ゆうちよ", "9900"),
+            ("ミズホ", "0001"),
+        ],
+    )
+    def test_loose_kana_ignores_kana_conventions(self, tmp_path, capsys, query, code):
+        src = write_input(tmp_path / "in.txt", self.LOOSE_ROWS)
+
+        main(["--input", str(src), "--search", query, "--loose-kana"])
+
+        assert capsys.readouterr().out.startswith(f"{code}\t000\t")
+
+    def test_search_without_loose_kana_is_unchanged(self, tmp_path, capsys):
+        src = write_input(tmp_path / "in.txt", self.LOOSE_ROWS)
+
+        with pytest.raises(SystemExit) as excinfo:
+            main(["--input", str(src), "--search", "トウキョウ"])
+
+        assert excinfo.value.code == 1
+        assert capsys.readouterr().err == "エラー: 該当する銀行がありません。\n"
+
+    def test_search_banks_loose_kana(self):
+        banks = [bank_row(name="東京スター", kana="ﾄｳｷﾖｳｽﾀ-"), bank_row(name="みずほ", kana="ﾐｽﾞﾎ")]
+
+        assert search_banks(banks, "トウキョウ") == []
+        assert search_banks(banks, "トウキョウ", loose_kana=True) == [banks[0]]
+        assert search_banks(banks, "みずほ銀行", loose_kana=True) == []
+
+    @pytest.mark.parametrize("argv", [["--loose-kana"], ["--list", "0001", "--loose-kana"]])
+    def test_loose_kana_requires_search(self, argv, capsys):
+        with pytest.raises(SystemExit) as excinfo:
+            main(argv)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "--loose-kana は --search と組み合わせて指定してください。" in err
+
     @pytest.mark.parametrize(
         "code", ["", "001", "00001", "0001,0005", "abcd", "\uff10\uff10\uff10\uff11"]
     )

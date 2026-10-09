@@ -381,13 +381,31 @@ def filter_rows(
     )
 
 
-def search_banks(banks: list[list[str]], query: str) -> list[list[str]]:
-    """全角・半角と大文字・小文字を区別せず銀行名とカナを検索します。"""
-    needle = normalize("NFKC", query).casefold()
+# --loose-kana 用です。ひらがなをカタカナにします。
+_HIRAGANA_TO_KATAKANA = {code: code + 0x60 for code in range(ord("ぁ"), ord("ゖ") + 1)}
+# 元データのｶﾅに合わせ、小さい文字を大きい文字に、長音を - にします。
+_SMALL_KANA_TO_LARGE = str.maketrans("ァィゥェォッャュョヮヵヶー", "アイウエオツヤユヨワカケ-")
+
+
+def _fold(text: str, loose_kana: bool) -> str:
+    folded = normalize("NFKC", text).casefold()
+    if loose_kana:
+        folded = folded.translate(_HIRAGANA_TO_KATAKANA).translate(_SMALL_KANA_TO_LARGE)
+    return folded
+
+
+def search_banks(
+    banks: list[list[str]], query: str, *, loose_kana: bool = False
+) -> list[list[str]]:
+    """全角・半角と大文字・小文字を区別せず銀行名とカナを検索します。
+
+    loose_kana が真なら、ひらがな・カタカナ、小さい文字と大きい文字、長音と - も区別しません。
+    """
+    needle = _fold(query, loose_kana)
     return [
         row
         for row in banks
-        if any(needle in normalize("NFKC", value).casefold() for value in (row[NAME], _kana(row)))
+        if any(needle in _fold(value, loose_kana) for value in (row[NAME], _kana(row)))
     ]
 
 
@@ -477,6 +495,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="ファイルを作らず、OLD から --input への追加・削除・名称変更を表示する",
     )
     mode.add_argument("--search", metavar="TEXT", help="銀行名またはカナを検索して TSV で表示する")
+    parser.add_argument(
+        "--loose-kana",
+        action="store_true",
+        help="--search で、ひらがな・カタカナ、小さい文字 (ｮ と ﾖ)、長音 (ｰ と -) の違いも無視する",
+    )
     mode.add_argument(
         "--list", type=_bank_code, metavar="CODE", help="銀行とその支店を TSV で表示する"
     )
@@ -490,6 +513,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         parser.error("--stdout は --check, --diff-from, --search, --list と同時に指定できません。")
     if args.input == STDIN and args.diff_from == STDIN:
         parser.error("--input と --diff-from の両方を標準入力にはできません。")
+    if args.loose_kana and args.search is None:
+        parser.error("--loose-kana は --search と組み合わせて指定してください。")
     return args
 
 
@@ -552,7 +577,7 @@ def _run_lookup(
     args: argparse.Namespace, banks: list[list[str]], branches: list[list[str]]
 ) -> None:
     if args.search is not None:
-        matches = search_banks(banks, args.search)
+        matches = search_banks(banks, args.search, loose_kana=args.loose_kana)
         if not matches:
             _fail("該当する銀行がありません。")
         _print_lookup(matches, f"{len(matches)} 件")
